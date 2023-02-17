@@ -14,7 +14,7 @@ var cacheExpiryDate time.Time
 var cacheValidity int
 
 //Sets the cache-Control header on the writer with the settings of Cache Expiry
-func setCacheHeader(w http.ResponseWriter) {
+func SetCacheHeader(w http.ResponseWriter) {
 
 	var cacheStatement string
 
@@ -30,7 +30,7 @@ func setCacheHeader(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", cacheStatement)
 }
 
-//Setup caching variables
+//Setup caching variables based on standard, or a future fixed point in time
 func SetupStaticCache() {
 
 	var timeFarAway = time.Date(2100, time.November, 10, 23, 0, 0, 0, time.UTC)

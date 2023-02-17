@@ -23,7 +23,7 @@ func handleRestrictiveRobotsTxt(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
 
-	setCacheHeader(w)
+	SetCacheHeader(w)
 
 	const res string = "User-agent: *\nDisallow: /"
 
