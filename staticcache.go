@@ -31,7 +31,7 @@ func setCacheHeader(w http.ResponseWriter) {
 }
 
 //Setup caching variables
-func setupStaticCache() {
+func SetupStaticCache() {
 
 	var timeFarAway = time.Date(2100, time.November, 10, 23, 0, 0, 0, time.UTC)
 	const standardValidity = 86000 //1 day
