@@ -3,12 +3,12 @@ package goutils
 import (
 	"testing"
 
-	logging "github.com/tingdahl/gcplogging"
+	"github.com/tingdahl/goutils/logging"
 )
 
 func TestMain(m *testing.M) {
-	logging.InitGCPEnvironment("dummy")
-	logging.InitLogging(logging.GCPProject())
+	InitGCPEnvironment("dummy")
+	logging.InitLogging(GCPProject())
 	m.Run()
 }
 

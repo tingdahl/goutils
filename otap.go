@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync"
 
-	logging "github.com/tingdahl/gcplogging"
+	"github.com/tingdahl/goutils/logging"
 )
 
 //Variable with the
