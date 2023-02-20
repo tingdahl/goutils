@@ -17,8 +17,8 @@ var (
 	contentSecurityPolicy string
 )
 
+// Determine port for HTTP service.
 func GetHttpPort() string {
-	// Determine port for HTTP service.
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
