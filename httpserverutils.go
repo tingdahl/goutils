@@ -1,12 +1,15 @@
 package goutils
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/lpar/gzipped/v2"
+	"github.com/tingdahl/goutils/logging"
 )
 
 var (
@@ -14,8 +17,33 @@ var (
 	contentSecurityPolicy string
 )
 
-func SetContentSecurityPolicy(csp string) {
-	contentSecurityPolicy = csp
+func GetHttpPort() string {
+	// Determine port for HTTP service.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+		if logging.ShouldLog(logging.Info) {
+			logging.Log(fmt.Sprintf("Listening to port %s (default)", port), logging.Info)
+		}
+
+	} else {
+		if logging.ShouldLog(logging.Info) {
+			logging.Log(fmt.Sprintf("Listening to port %s (from PORT environment)", port),
+				logging.Info)
+		}
+	}
+
+	return port
+}
+
+//Sets CSP to 'self', plus the given default, script, image and style sources
+func SetContentSecurityPolicy(defaultSource string, scriptSource string, imageSource string, styleSource string) {
+
+	//Construct CSP from checksums
+	contentSecurityPolicy = "default-src 'self' " + defaultSource
+	contentSecurityPolicy += "; script-src 'self' " + scriptSource
+	contentSecurityPolicy += "; img-src 'self' " + imageSource
+	contentSecurityPolicy += "; style-src 'self' " + styleSource
 }
 
 func SetPermissionPolicy(pp string) {
