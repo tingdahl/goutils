@@ -84,3 +84,8 @@ func staticFileHandler(h http.Handler, emptyPathFile string) http.Handler {
 		h.ServeHTTP(w, request)
 	})
 }
+
+//Set Content-Type Json header
+func SetJSonHeader(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+}
