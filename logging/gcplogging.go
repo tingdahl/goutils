@@ -1,3 +1,4 @@
+// Deprecated: Use telemetry.ContextHandler with standard log/slog instead.
 package logging
 
 import (
@@ -23,7 +24,8 @@ var projectID string = ""
 var runningInGCP bool = false
 var logLevel = Error
 
-//Returns true if the severity should be logged.
+// Deprecated: Use log/slog levels with telemetry.ContextHandler instead.
+// Returns true if the severity should be logged.
 func ShouldLog(severity Severity) bool {
 	return severity >= logLevel
 }

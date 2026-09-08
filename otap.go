@@ -12,7 +12,8 @@ import (
 var otap string
 var otaplock sync.Mutex
 
-//Retuns string with current OTAP (dev/prod/staging) as set by the OTAP environment
+// Deprecated: Use config.GetEnvironment() or config.Config().GetEnvironment() instead.
+// Returns string with current OTAP (dev/prod/staging) as set by the OTAP environment
 func GetOtap() string {
 	otaplock.Lock()
 	if len(otap) == 0 {

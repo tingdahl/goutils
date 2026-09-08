@@ -17,6 +17,7 @@ var (
 	contentSecurityPolicy string
 )
 
+// Deprecated: Use httputil.GetPort() or config.GetPort() instead.
 // Determine port for HTTP service.
 func GetHttpPort() string {
 	port := os.Getenv("PORT")
@@ -36,7 +37,8 @@ func GetHttpPort() string {
 	return port
 }
 
-//Sets CSP to 'self', plus the given default, script, image and style sources
+// Deprecated: Use httputil.SecurityHeadersMiddleware instead.
+// Sets CSP to 'self', plus the given default, script, image and style sources
 func SetContentSecurityPolicy(defaultSource string, scriptSource string, imageSource string, styleSource string) {
 
 	//Construct CSP from checksums
@@ -46,11 +48,13 @@ func SetContentSecurityPolicy(defaultSource string, scriptSource string, imageSo
 	contentSecurityPolicy += "; style-src 'self' " + styleSource
 }
 
+// Deprecated: Use httputil.SecurityHeadersMiddleware instead.
 func SetPermissionPolicy(pp string) {
 	permissionPolicy = pp
 }
 
-//Setup server for serving static pages from /client/public
+// Deprecated: Use httputil.NewStaticServer instead.
+// Setup server for serving static pages from /client/public
 func SetupStaticServer(router *mux.Router, inputDir string, emptyPathFile string) error {
 
 	fs := staticFileHandler(gzipped.FileServer(gzipped.Dir(inputDir)), emptyPathFile)
@@ -85,7 +89,8 @@ func staticFileHandler(h http.Handler, emptyPathFile string) http.Handler {
 	})
 }
 
-//Set Content-Type Json header
+// Deprecated: Use httputil.SetJSONHeader instead.
+// Set Content-Type Json header
 func SetJSonHeader(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 }

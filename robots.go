@@ -7,6 +7,7 @@ import (
 	"github.com/tingdahl/goutils/logging"
 )
 
+// Deprecated: Use httputil.RestrictiveRobotsTxtHandler() instead.
 func InitRestrictiveRobotsTxt(router *mux.Router) {
 	if logging.ShouldLog(logging.Info) {
 		logging.Log("Setting up restrictive robots.txt", logging.Info)

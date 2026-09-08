@@ -17,7 +17,8 @@ var gcpMutex = &sync.Mutex{}
 var googleProjectID string = ""
 var inCloud bool = false
 
-//Returns if we are running in GCP cloud.
+// Deprecated: Use cloud/gcp.IsRunningOnGCE() instead.
+// Returns if we are running in GCP cloud.
 func RunningInGCP() bool {
 	if googleProjectID == "" {
 		log.Fatal("Google project not set.")
@@ -26,6 +27,7 @@ func RunningInGCP() bool {
 	return inCloud
 }
 
+// Deprecated: Use cloud/gcp.DetermineProjectID() instead.
 func GCPProject() string {
 	if googleProjectID == "" {
 		log.Fatal("Google project not set.")
@@ -34,7 +36,8 @@ func GCPProject() string {
 	return googleProjectID
 }
 
-//Get the GCP project, and if we are running in cloud
+// Deprecated: Use cloud/gcp.DetermineProjectID() instead.
+// Get the GCP project, and if we are running in cloud
 func InitGCPEnvironment(defaultProj string) (string, bool) {
 
 	var logMessage string = ""

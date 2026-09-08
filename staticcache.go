@@ -13,7 +13,8 @@ import (
 var cacheExpiryDate time.Time
 var cacheValidity int
 
-//Sets the cache-Control header on the writer with the settings of Cache Expiry
+// Deprecated: Use httputil.SetCacheControl or httputil.NewStaticServer instead.
+// Sets the cache-Control header on the writer with the settings of Cache Expiry
 func SetCacheHeader(w http.ResponseWriter) {
 
 	var cacheStatement string
@@ -30,7 +31,8 @@ func SetCacheHeader(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", cacheStatement)
 }
 
-//Setup caching variables based on standard, or a future fixed point in time
+// Deprecated: Static cache configuration is handled automatically by httputil.NewStaticServer.
+// Setup caching variables based on standard, or a future fixed point in time
 func SetupStaticCache() {
 
 	var timeFarAway = time.Date(2100, time.November, 10, 23, 0, 0, 0, time.UTC)

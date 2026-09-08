@@ -1,0 +1,31 @@
+# Binaries and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+debug
+__debug_bin*
+
+# Environment and local configs
+.env
+.env.*
+*.local
+credentials.json
+sa-key.json
+*.key
+*.pem
+
+# Editor and IDE metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
