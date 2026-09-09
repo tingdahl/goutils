@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package billing;
+option go_package = "github.com/tingdahl/goutils/billing";
+
+message PaymentReceiptProto {
+    string id = 1;                   // Internal unique receipt ID (UUID)
+    string invoice_id = 2;           // External invoice number (e.g. Stripe INV-...)
+    int32 date_id = 3;               // Date of payment (YYYYMMDD)
+    int64 amount_cents = 4;          // Amount in minor units (e.g. 19900 = 199.00 SEK)
+    string currency = 5;             // Currency code (e.g. "SEK", "EUR", "USD")
+    int64 created_at_unix_ms = 6;    // Payment creation timestamp (epoch ms)
+    string description = 7;          // Item / plan description (e.g. "Monthly Pro Plan", "50h Streaming")
+    string product_id = 8;           // Product SKU or plan ID (e.g. "plan_monthly_pro")
+    string receipt_object_key = 9;   // Storage object key for the PDF (e.g. "billing/receipts/123/uuid.pdf")
+    string pdf_filename = 10;        // Display filename for download (e.g. "receipt-INV-1042.pdf")
+    int64 size_bytes = 11;           // PDF file size in bytes
+}
+
+message AddReceiptRequestProto {
+    PaymentReceiptProto receipt = 1;
+    bytes pdf_content = 2;
+    string pdf_filename = 3;
+}
+
+message EntityBillingProto {
+    int64 entity_id = 1;             // Organization / Company / Tenant ID
+    int64 updated_at_unix_ms = 2;    // Last modification timestamp (epoch ms)
+    repeated PaymentReceiptProto receipts = 3; // Permanent receipts ledger
+}
+
+message BillingProto {
+    int32 schema_minor_version = 1;
+    string last_modified_by_commit = 2;
+
+    // Key is entity ID (company_id or tenant_id)
+    map<int64, EntityBillingProto> entities = 3;
+}
