@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Monthly non-security version updates for Go modules bundled into 1 PR
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 10
+    groups:
+      dependencies:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+
+  # Monthly updates for GitHub Actions workflows bundled into 1 PR
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 10
+    groups:
+      actions:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
