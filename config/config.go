@@ -67,8 +67,8 @@ func NewConfigManager(lookup func(key string) string) *ConfigManager {
 	return &ConfigManager{lookup: lookup}
 }
 
-// GetSecret retrieves a raw configuration or secret value by key from the environment.
-func (c *ConfigManager) GetSecret(key string) string {
+// GetConfigString retrieves a raw configuration or secret value by key from the environment.
+func (c *ConfigManager) GetConfigString(key string) string {
 	if c.lookup == nil {
 		return ""
 	}
@@ -78,10 +78,10 @@ func (c *ConfigManager) GetSecret(key string) string {
 // GetEnvironment returns ENVIRONMENT, falling back to OTAP for backward compatibility,
 // or defaults to "dev" if both are unset.
 func (c *ConfigManager) GetEnvironment() string {
-	if val := c.GetSecret(EnvEnvironment); val != "" {
+	if val := c.GetConfigString(EnvEnvironment); val != "" {
 		return val
 	}
-	if val := c.GetSecret(EnvOTAP); val != "" {
+	if val := c.GetConfigString(EnvOTAP); val != "" {
 		return val
 	}
 	return DefaultEnvironment
@@ -98,7 +98,7 @@ func (c *ConfigManager) ValidateEnvironment() error {
 
 // GetPort returns PORT or defaults to "8080" if unset.
 func (c *ConfigManager) GetPort() string {
-	val := c.GetSecret(EnvPort)
+	val := c.GetConfigString(EnvPort)
 	if val == "" {
 		return DefaultPort
 	}
@@ -107,7 +107,7 @@ func (c *ConfigManager) GetPort() string {
 
 // GetLogLevel returns LOG_LEVEL or defaults to "INFO" if unset.
 func (c *ConfigManager) GetLogLevel() string {
-	val := c.GetSecret(EnvLogLevel)
+	val := c.GetConfigString(EnvLogLevel)
 	if val == "" {
 		return DefaultLogLevel
 	}
@@ -116,7 +116,7 @@ func (c *ConfigManager) GetLogLevel() string {
 
 // GetDefaultTimezone returns DEFAULT_TIMEZONE or defaults to "Europe/Stockholm" if unset.
 func (c *ConfigManager) GetDefaultTimezone() string {
-	val := c.GetSecret(EnvDefaultTimezone)
+	val := c.GetConfigString(EnvDefaultTimezone)
 	if val == "" {
 		return DefaultTimezone
 	}
@@ -125,97 +125,97 @@ func (c *ConfigManager) GetDefaultTimezone() string {
 
 // GetAssetsURL returns ASSETS_URL, falling back to ASSETS_BASE_URL.
 func (c *ConfigManager) GetAssetsURL() string {
-	if val := c.GetSecret(EnvAssetsURL); val != "" {
+	if val := c.GetConfigString(EnvAssetsURL); val != "" {
 		return val
 	}
-	return c.GetSecret(EnvAssetsBaseURL)
+	return c.GetConfigString(EnvAssetsBaseURL)
 }
 
 // GetCORSAllowedOrigins returns CORS_ALLOWED_ORIGINS, falling back to ALLOWED_ORIGIN.
 func (c *ConfigManager) GetCORSAllowedOrigins() string {
-	if val := c.GetSecret(EnvCORSAllowedOrigins); val != "" {
+	if val := c.GetConfigString(EnvCORSAllowedOrigins); val != "" {
 		return val
 	}
-	return c.GetSecret(EnvAllowedOrigin)
+	return c.GetConfigString(EnvAllowedOrigin)
 }
 
 // GetSCWProjectID returns SCW_PROJECT_ID, falling back to SCW_DEFAULT_PROJECT_ID.
 func (c *ConfigManager) GetSCWProjectID() string {
-	if val := c.GetSecret(EnvSCWProjectID); val != "" {
+	if val := c.GetConfigString(EnvSCWProjectID); val != "" {
 		return val
 	}
-	return c.GetSecret(EnvSCWDefaultProjectID)
+	return c.GetConfigString(EnvSCWDefaultProjectID)
 }
 
 // GetS3Region returns S3_REGION, falling back to SCW_REGION, then SCW_DEFAULT_ZONE.
 func (c *ConfigManager) GetS3Region() string {
-	if val := c.GetSecret(EnvS3Region); val != "" {
+	if val := c.GetConfigString(EnvS3Region); val != "" {
 		return val
 	}
-	if val := c.GetSecret(EnvSCWRegion); val != "" {
+	if val := c.GetConfigString(EnvSCWRegion); val != "" {
 		return val
 	}
-	return c.GetSecret(EnvSCWDefaultZone)
+	return c.GetConfigString(EnvSCWDefaultZone)
 }
 
 // GetS3AppDataBucket returns S3_APPDATA_NAME.
 func (c *ConfigManager) GetS3AppDataBucket() string {
-	return c.GetSecret(EnvS3AppDataName)
+	return c.GetConfigString(EnvS3AppDataName)
 }
 
 // GetS3Endpoint returns S3_ENDPOINT.
 func (c *ConfigManager) GetS3Endpoint() string {
-	return c.GetSecret(EnvS3Endpoint)
+	return c.GetConfigString(EnvS3Endpoint)
 }
 
 // GetPublicCloud returns PUBLIC_CLOUD.
 func (c *ConfigManager) GetPublicCloud() string {
-	return c.GetSecret(EnvPublicCloud)
+	return c.GetConfigString(EnvPublicCloud)
 }
 
 // GetOIDCProvidersConfig returns OIDC_PROVIDERS_CONFIG.
 func (c *ConfigManager) GetOIDCProvidersConfig() string {
-	return c.GetSecret(EnvOIDCProvidersConfig)
+	return c.GetConfigString(EnvOIDCProvidersConfig)
 }
 
 // GetHealthCheckAPIKey returns HEALTHCHECK_API_KEY.
 func (c *ConfigManager) GetHealthCheckAPIKey() string {
-	return c.GetSecret(EnvHealthCheckAPIKey)
+	return c.GetConfigString(EnvHealthCheckAPIKey)
 }
 
 // GetCronSecret returns CRON_SECRET.
 func (c *ConfigManager) GetCronSecret() string {
-	return c.GetSecret(EnvCronSecret)
+	return c.GetConfigString(EnvCronSecret)
 }
 
 // GetAppDomain returns APP_DOMAIN.
 func (c *ConfigManager) GetAppDomain() string {
-	return c.GetSecret(EnvAppDomain)
+	return c.GetConfigString(EnvAppDomain)
 }
 
 // GetAPIBaseURL returns API_BASE_URL.
 func (c *ConfigManager) GetAPIBaseURL() string {
-	return c.GetSecret(EnvAPIBaseURL)
+	return c.GetConfigString(EnvAPIBaseURL)
 }
 
 // GetTrustedProxies returns TRUSTED_PROXIES.
 func (c *ConfigManager) GetTrustedProxies() string {
-	return c.GetSecret(EnvTrustedProxies)
+	return c.GetConfigString(EnvTrustedProxies)
 }
 
 // GetSCWAccessKey returns SCW_ACCESS_KEY.
 func (c *ConfigManager) GetSCWAccessKey() string {
-	return c.GetSecret(EnvSCWAccessKey)
+	return c.GetConfigString(EnvSCWAccessKey)
 }
 
 // GetSCWSecretKey returns SCW_SECRET_KEY.
 func (c *ConfigManager) GetSCWSecretKey() string {
-	return c.GetSecret(EnvSCWSecretKey)
+	return c.GetConfigString(EnvSCWSecretKey)
 }
 
 // GetSCWOrganizationID returns SCW_DEFAULT_ORGANIZATION_ID.
 func (c *ConfigManager) GetSCWOrganizationID() string {
-	return c.GetSecret(EnvSCWOrganizationID)
+	return c.GetConfigString(EnvSCWOrganizationID)
 }
 
 // Package-level helper functions delegating to default singleton
@@ -232,5 +232,5 @@ func GetPort() string {
 
 // GetSecret retrieves a secret from default Config.
 func GetSecret(key string) string {
-	return Config().GetSecret(key)
+	return Config().GetConfigString(key)
 }
