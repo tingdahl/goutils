@@ -3,6 +3,7 @@ package docstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,11 @@ type DocumentClient interface {
 	StampVersion(msg proto.Message, schemaMinor int32, commit string)
 }
 
+// DocumentHolder is implemented by domain structures that embed Document.
+type DocumentHolder interface {
+	GetDocument() *Document
+}
+
 // DocumentUpdateFunc is a callback function passed to Document.Update.
 // It receives a cloned, type-safe representation of the document's protobuf message,
 // modifies it in-place, and returns any validation or application-level errors.
@@ -44,12 +50,61 @@ type Document struct {
 	SupportedSchemaMinor int32
 }
 
+// GetDocument returns the pointer to the underlying Document.
+func (d *Document) GetDocument() *Document {
+	return d
+}
+
 // UpdateFromStorage reloads the document from storage under a write lock.
 func (d *Document) UpdateFromStorage() error {
 	d.Rwlock.Lock()
 	defer d.Rwlock.Unlock()
 
 	return d.DoLoad()
+}
+
+// CheckAndReload queries the storage client for the object's current revision.
+// If the revision matches d.Revision, it updates d.LastRead and returns (false, nil).
+// If the revision has changed, it reloads the document from storage under a write lock
+// and returns (true, nil).
+func (d *Document) CheckAndReload(ctx context.Context) (bool, error) {
+	d.Rwlock.RLock()
+	storageClient := d.Storage
+	bucket := d.BucketName
+	object := d.ObjectName
+	localRev := d.Revision
+	d.Rwlock.RUnlock()
+
+	if storageClient == nil {
+		return false, errors.New("storage client cannot be nil")
+	}
+
+	remoteRev, err := storageClient.GetCurrentRevision(ctx, bucket, object)
+	if err != nil {
+		return false, fmt.Errorf("failed to get current revision for %s/%s: %w", bucket, object, err)
+	}
+
+	if remoteRev == localRev {
+		d.Rwlock.Lock()
+		d.LastRead = time.Now()
+		d.Rwlock.Unlock()
+		return false, nil
+	}
+
+	// Revision changed; reload under write lock.
+	d.Rwlock.Lock()
+	defer d.Rwlock.Unlock()
+
+	// Double check under write lock to avoid duplicate reload if another goroutine reloaded it.
+	if remoteRev != "" && d.Revision == remoteRev {
+		return false, nil
+	}
+
+	if err := d.DoLoad(); err != nil {
+		return false, fmt.Errorf("failed to reload document %s/%s: %w", bucket, object, err)
+	}
+
+	return true, nil
 }
 
 func isNotFoundError(err error) bool {
@@ -140,7 +195,7 @@ func (d *Document) Update(ctx context.Context, updateFn DocumentUpdateFunc) erro
 			}
 		}
 
-		_, err = d.Storage.WriteObjectIfRevisionMatch(ctx, d.BucketName, d.ObjectName, newProtobuf, d.Revision)
+		newRev, err := d.Storage.WriteObjectIfRevisionMatch(ctx, d.BucketName, d.ObjectName, newProtobuf, d.Revision)
 		if err != nil {
 			if errors.Is(err, storage.RevisionWriteError) || err == storage.RevisionWriteError {
 				continue
@@ -149,6 +204,9 @@ func (d *Document) Update(ctx context.Context, updateFn DocumentUpdateFunc) erro
 		}
 
 		// Succeeded
+		d.Revision = newRev
+		d.LastRead = time.Now()
+
 		if d.ProtoMsg != nil {
 			proto.Reset(d.ProtoMsg)
 		}

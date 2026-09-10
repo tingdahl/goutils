@@ -23,16 +23,10 @@ message AddReceiptRequestProto {
     string pdf_filename = 3;
 }
 
-message EntityBillingProto {
-    int64 entity_id = 1;             // Organization / Company / Tenant ID
-    int64 updated_at_unix_ms = 2;    // Last modification timestamp (epoch ms)
-    repeated PaymentReceiptProto receipts = 3; // Permanent receipts ledger
-}
-
 message BillingProto {
     int32 schema_minor_version = 1;
     string last_modified_by_commit = 2;
-
-    // Key is entity ID (company_id or tenant_id)
-    map<int64, EntityBillingProto> entities = 3;
+    int64 tenant_id = 3;
+    int64 updated_at_unix_ms = 4;
+    repeated PaymentReceiptProto receipts = 5;
 }

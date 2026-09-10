@@ -15,154 +15,84 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	SchemaMinor    int32  = 0
-	ReceiptsPrefix string = "billing/receipts"
-	DbObjectName   string = "billing.v1.pb"
-)
+// Init initializes the billing repository for the given storage client and bucket.
+func Init(store storage.StorageClient, bucket string) error {
+	if store == nil {
+		return errors.New("storage client cannot be nil")
+	}
+	if bucket == "" {
+		return errors.New("bucket name cannot be empty")
+	}
 
-var (
-	ErrEntityNotFound  = errors.New("entity billing record not found")
-	ErrReceiptNotFound = errors.New("payment receipt not found")
-	ErrNilReceipt      = errors.New("receipt cannot be nil")
-	initOnce           sync.Once
-	billingClient      *BillingClient
-)
+	billingInitOnce.Do(func() {
+		billingStore = store
+		billingBucket = bucket
+		billingRepo = docstore.NewRepository[*BillingClient](billingClientFactory)
+	})
+	return nil
+}
 
+// GetBillingClient retrieves the cached BillingClient for the specified tenant ID.
+func GetBillingClient(ctx context.Context, tenantID int64) (*BillingClient, error) {
+	if billingRepo == nil {
+		return nil, errors.New("billing package not initialized: call billing.Init() first")
+	}
+	if tenantID <= 0 {
+		return nil, errors.New("tenant ID must be greater than zero")
+	}
+
+	return billingRepo.Get(ctx, TenantBillingPath(tenantID))
+}
+
+// TenantBillingPath returns the storage object path for a given tenant ID.
+func TenantBillingPath(tenantID int64) string {
+	return fmt.Sprintf("/tenant/%d/billing.v1.pb.br", tenantID)
+}
+
+// BillingClient provides access to billing data and payment receipts for a tenant.
 type BillingClient struct {
 	docstore.Document
 	data BillingProto
 }
 
-func (s *BillingClient) ReadFromProto(data []byte) error {
-	proto.Reset(&s.data)
-	if data == nil {
-		return nil
-	}
-	return proto.Unmarshal(data, &s.data)
+// TenantID returns the tenant ID associated with this billing document.
+func (s *BillingClient) TenantID() int64 {
+	s.Rwlock.RLock()
+	defer s.Rwlock.RUnlock()
+	return s.data.TenantId
 }
 
-func (s *BillingClient) GetSchemaMinorVersion() int32 {
-	return s.data.SchemaMinorVersion
-}
-
-func (s *BillingClient) StampVersion(msg proto.Message, schemaMinor int32, commit string) {
-	doc := msg.(*BillingProto)
-	doc.SchemaMinorVersion = schemaMinor
-	doc.LastModifiedByCommit = commit
-}
-
-// NewBillingClient creates a new BillingClient using the provided storage client and bucket name.
-func NewBillingClient(store storage.StorageClient, bucket string) (*BillingClient, error) {
-	if store == nil {
-		return nil, errors.New("storage client cannot be nil")
-	}
-	if bucket == "" {
-		return nil, errors.New("bucket name cannot be empty")
-	}
-
-	client := &BillingClient{}
-	client.Document = docstore.Document{
-		Client:               client,
-		Storage:              store,
-		BucketName:           bucket,
-		ObjectName:           DbObjectName,
-		ProtoMsg:             &client.data,
-		SupportedSchemaMinor: SchemaMinor,
-	}
-
-	if err := client.DoLoad(); err != nil {
-		return nil, fmt.Errorf("failed to load billing database from storage: %w", err)
-	}
-
-	return client, nil
-}
-
-// CreateBillingClient creates a BillingClient using the globally configured storage client and default bucket.
-func CreateBillingClient(ctx context.Context) (*BillingClient, error) {
-	var initErr error
-	initOnce.Do(func() {
-		if err := storage.Init(); err != nil {
-			initErr = fmt.Errorf("failed to initialize storage: %w", err)
-			return
-		}
-
-		store, err := storage.NewStorageClient()
-		if err != nil {
-			initErr = fmt.Errorf("failed to create storage client: %w", err)
-			return
-		}
-
-		client, err := NewBillingClient(store, storage.BucketName)
-		if err != nil {
-			initErr = err
-			return
-		}
-		billingClient = client
-	})
-
-	if initErr != nil {
-		return nil, initErr
-	}
-	if billingClient == nil {
-		return nil, errors.New("billing client not initialized")
-	}
-	return billingClient, nil
-}
-
-// GetEntityBilling retrieves a copy of billing records for a given entity (tenant/company) ID.
-func (s *BillingClient) GetEntityBilling(entityID int64) *EntityBillingProto {
+// ListReceipts returns all receipts recorded for this tenant.
+func (s *BillingClient) ListReceipts() []*PaymentReceiptProto {
 	s.Rwlock.RLock()
 	defer s.Rwlock.RUnlock()
 
-	if s.data.Entities != nil {
-		if entity, ok := s.data.Entities[entityID]; ok && entity != nil {
-			return proto.Clone(entity).(*EntityBillingProto)
-		}
+	if len(s.data.Receipts) == 0 {
+		return []*PaymentReceiptProto{}
 	}
 
-	return &EntityBillingProto{
-		EntityId: entityID,
-		Receipts: []*PaymentReceiptProto{},
-	}
-}
-
-// GetAllEntityBilling retrieves copies of all entity billing records.
-func (s *BillingClient) GetAllEntityBilling() map[int64]*EntityBillingProto {
-	s.Rwlock.RLock()
-	defer s.Rwlock.RUnlock()
-
-	result := make(map[int64]*EntityBillingProto, len(s.data.Entities))
-	for entityID, entity := range s.data.Entities {
-		if entity != nil {
-			result[entityID] = proto.Clone(entity).(*EntityBillingProto)
-		}
+	result := make([]*PaymentReceiptProto, len(s.data.Receipts))
+	for i, r := range s.data.Receipts {
+		result[i] = proto.Clone(r).(*PaymentReceiptProto)
 	}
 	return result
 }
 
-// ListReceipts returns all receipts recorded for a given entity ID.
-func (s *BillingClient) ListReceipts(entityID int64) []*PaymentReceiptProto {
-	entity := s.GetEntityBilling(entityID)
-	if entity == nil || len(entity.Receipts) == 0 {
-		return []*PaymentReceiptProto{}
-	}
-	return entity.Receipts
-}
+// GetReceipt returns a receipt by ID or InvoiceId.
+func (s *BillingClient) GetReceipt(receiptID string) *PaymentReceiptProto {
+	s.Rwlock.RLock()
+	defer s.Rwlock.RUnlock()
 
-// GetReceipt returns a receipt by ID or InvoiceId for an entity.
-func (s *BillingClient) GetReceipt(entityID int64, receiptID string) *PaymentReceiptProto {
-	entity := s.GetEntityBilling(entityID)
-	for _, r := range entity.Receipts {
+	for _, r := range s.data.Receipts {
 		if r.Id == receiptID || r.InvoiceId == receiptID {
-			return r
+			return proto.Clone(r).(*PaymentReceiptProto)
 		}
 	}
 	return nil
 }
 
-// AddReceipt records a payment receipt for an entity, saves optional PDF bytes to object storage, and returns the saved receipt.
-func (s *BillingClient) AddReceipt(ctx context.Context, entityID int64, req *AddReceiptRequestProto, userId string) (*PaymentReceiptProto, error) {
+// AddReceipt records a payment receipt for the tenant, saves optional PDF bytes to object storage, and returns the saved receipt.
+func (s *BillingClient) AddReceipt(ctx context.Context, req *AddReceiptRequestProto, userId string) (*PaymentReceiptProto, error) {
 	if req == nil || req.Receipt == nil {
 		return nil, ErrNilReceipt
 	}
@@ -183,7 +113,8 @@ func (s *BillingClient) AddReceipt(ctx context.Context, entityID int64, req *Add
 
 	// 1. If PDF bytes are provided, store via storage client under ReceiptsPrefix
 	if len(req.PdfContent) > 0 {
-		objectKey := fmt.Sprintf("%s/%d/%s.pdf", ReceiptsPrefix, entityID, receipt.Id)
+		tenantID := s.TenantID()
+		objectKey := fmt.Sprintf("%s/%d/%s.pdf", ReceiptsPrefix, tenantID, receipt.Id)
 		_, err := s.Storage.WriteRawObject(ctx, s.BucketName, objectKey, req.PdfContent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write receipt PDF to storage: %w", err)
@@ -193,27 +124,11 @@ func (s *BillingClient) AddReceipt(ctx context.Context, entityID int64, req *Add
 		receipt.SizeBytes = int64(len(req.PdfContent))
 	}
 
-	// 2. Append receipt to billing database
+	// 2. Append receipt to tenant's billing document
 	err := s.Update(ctx, func(msg proto.Message) error {
 		doc := msg.(*BillingProto)
-		if doc.Entities == nil {
-			doc.Entities = make(map[int64]*EntityBillingProto)
-		}
-
-		now := time.Now().UnixMilli()
-		entity, exists := doc.Entities[entityID]
-		if !exists || entity == nil {
-			entity = &EntityBillingProto{
-				EntityId:        entityID,
-				UpdatedAtUnixMs: now,
-				Receipts:        []*PaymentReceiptProto{receipt},
-			}
-			doc.Entities[entityID] = entity
-			return nil
-		}
-
-		entity.UpdatedAtUnixMs = now
-		entity.Receipts = append(entity.Receipts, receipt)
+		doc.UpdatedAtUnixMs = time.Now().UnixMilli()
+		doc.Receipts = append(doc.Receipts, receipt)
 		return nil
 	})
 	if err != nil {
@@ -223,9 +138,9 @@ func (s *BillingClient) AddReceipt(ctx context.Context, entityID int64, req *Add
 	return receipt, nil
 }
 
-// GetReceiptPDF retrieves the raw PDF bytes and metadata for a specific receipt of an entity.
-func (s *BillingClient) GetReceiptPDF(ctx context.Context, entityID int64, receiptID string) ([]byte, *PaymentReceiptProto, error) {
-	receipt := s.GetReceipt(entityID, receiptID)
+// GetReceiptPDF retrieves the raw PDF bytes and metadata for a specific receipt.
+func (s *BillingClient) GetReceiptPDF(ctx context.Context, receiptID string) ([]byte, *PaymentReceiptProto, error) {
+	receipt := s.GetReceipt(receiptID)
 	if receipt == nil {
 		return nil, nil, ErrReceiptNotFound
 	}
@@ -243,8 +158,8 @@ func (s *BillingClient) GetReceiptPDF(ctx context.Context, entityID int64, recei
 }
 
 // GetReceiptDownloadLink returns a pre-signed storage URL for a specific receipt.
-func (s *BillingClient) GetReceiptDownloadLink(ctx context.Context, entityID int64, receiptID string, validitySeconds int) (string, *PaymentReceiptProto, error) {
-	receipt := s.GetReceipt(entityID, receiptID)
+func (s *BillingClient) GetReceiptDownloadLink(ctx context.Context, receiptID string, validitySeconds int) (string, *PaymentReceiptProto, error) {
+	receipt := s.GetReceipt(receiptID)
 	if receipt == nil {
 		return "", nil, ErrReceiptNotFound
 	}
@@ -259,4 +174,91 @@ func (s *BillingClient) GetReceiptDownloadLink(ctx context.Context, entityID int
 	}
 
 	return url, receipt, nil
+}
+
+// NewBillingClient creates a standalone, unmanaged BillingClient using the provided storage client, bucket name, and optional tenant ID.
+func NewBillingClient(store storage.StorageClient, bucket string, tenantID ...int64) (*BillingClient, error) {
+	objectPath := DbObjectName
+	if len(tenantID) > 0 && tenantID[0] > 0 {
+		objectPath = TenantBillingPath(tenantID[0])
+	}
+	return newBillingClient(store, bucket, objectPath)
+}
+
+// Exported constants and errors.
+const (
+	DbObjectName   string = "billing.v1.pb"
+	ReceiptsPrefix string = "billing/receipts"
+	SchemaMinor    int32  = 0
+)
+
+var (
+	ErrReceiptNotFound = errors.New("payment receipt not found")
+	ErrNilReceipt      = errors.New("receipt cannot be nil")
+)
+
+// --- Internal Implementation Details & Package State ---
+
+var (
+	billingInitOnce sync.Once
+	billingRepo     *docstore.Repository[*BillingClient]
+	billingStore    storage.StorageClient
+	billingBucket   string
+)
+
+func billingClientFactory(ctx context.Context, objectPath string) (*BillingClient, error) {
+	return newBillingClient(billingStore, billingBucket, objectPath)
+}
+
+func newBillingClient(store storage.StorageClient, bucket, objectPath string) (*BillingClient, error) {
+	if store == nil {
+		return nil, errors.New("storage client cannot be nil")
+	}
+	if bucket == "" {
+		return nil, errors.New("bucket name cannot be empty")
+	}
+	if objectPath == "" {
+		return nil, fmt.Errorf("object path cannot be empty")
+	}
+
+	client := &BillingClient{}
+	client.Document = docstore.Document{
+		Client:               client,
+		Storage:              store,
+		BucketName:           bucket,
+		ObjectName:           objectPath,
+		ProtoMsg:             &client.data,
+		SupportedSchemaMinor: SchemaMinor,
+	}
+
+	if err := client.DoLoad(); err != nil {
+		return nil, fmt.Errorf("failed to load billing database from storage: %w", err)
+	}
+
+	var tenantID int64
+	if n, _ := fmt.Sscanf(objectPath, "/tenant/%d/", &tenantID); n == 1 && tenantID > 0 {
+		if client.data.TenantId == 0 {
+			client.data.TenantId = tenantID
+		}
+	}
+
+	return client, nil
+}
+
+func (s *BillingClient) ReadFromProto(data []byte) error {
+	proto.Reset(&s.data)
+	if data == nil {
+		return nil
+	}
+	return proto.Unmarshal(data, &s.data)
+}
+
+func (s *BillingClient) GetSchemaMinorVersion() int32 {
+	return s.data.SchemaMinorVersion
+}
+
+func (s *BillingClient) StampVersion(msg proto.Message, schemaMinor int32, commit string) {
+	doc := msg.(*BillingProto)
+	doc.SchemaMinorVersion = schemaMinor
+	doc.LastModifiedByCommit = commit
 }
