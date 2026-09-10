@@ -104,7 +104,7 @@ func InitOIDCRegistry(ctx context.Context, configJSON string) (*OIDCRegistry, er
 		clientSecret := p.ClientSecret
 
 		if p.SecretName != "" && clientSecret == "" {
-			if envVal := config.Config().GetSecret(p.SecretName); envVal != "" {
+			if envVal := config.Config().GetConfigString(p.SecretName); envVal != "" {
 				clientSecret = envVal
 			}
 		}

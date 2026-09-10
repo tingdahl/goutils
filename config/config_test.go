@@ -20,8 +20,8 @@ func TestConfigManager_Defaults(t *testing.T) {
 	if got := cm.GetDefaultTimezone(); got != "Europe/Stockholm" {
 		t.Errorf("GetDefaultTimezone() = %q, want %q", got, "Europe/Stockholm")
 	}
-	if got := cm.GetSecret("NON_EXISTENT"); got != "" {
-		t.Errorf("GetSecret() = %q, want empty string", got)
+	if got := cm.GetConfigString("NON_EXISTENT"); got != "" {
+		t.Errorf("GetConfigString() = %q, want empty string", got)
 	}
 }
 
@@ -237,7 +237,7 @@ func TestDefaultConfig(t *testing.T) {
 	if GetPort() == "" {
 		t.Error("GetPort() returned empty string")
 	}
-	if GetSecret(EnvEnvironment) != "test" {
-		t.Errorf("GetSecret() = %q, want 'test'", GetSecret(EnvEnvironment))
+	if GetConfigString(EnvEnvironment) != "test" {
+		t.Errorf("GetConfigString() = %q, want 'test'", GetConfigString(EnvEnvironment))
 	}
 }

@@ -1,5 +1,7 @@
 package billing
 
+//go:generate protoc --go_out=. --go_opt=paths=source_relative billing.v1.proto
+
 import (
 	"context"
 	"errors"

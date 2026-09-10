@@ -230,7 +230,7 @@ func GetPort() string {
 	return Config().GetPort()
 }
 
-// GetSecret retrieves a secret from default Config.
-func GetSecret(key string) string {
+// GetConfigString retrieves a configuration value from default Config.
+func GetConfigString(key string) string {
 	return Config().GetConfigString(key)
 }

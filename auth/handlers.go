@@ -119,7 +119,7 @@ func (r *OIDCRegistry) getRedirectURI(req *http.Request, p *RegisteredProvider) 
 func (r *OIDCRegistry) getClientSecret(p *RegisteredProvider) string {
 	secret := p.ClientSecret
 	if secret == "" && p.Config.SecretName != "" {
-		secret = config.Config().GetSecret(p.Config.SecretName)
+		secret = config.Config().GetConfigString(p.Config.SecretName)
 	}
 	if secret == "" && p.Config.ClientSecret != "" {
 		secret = p.Config.ClientSecret
