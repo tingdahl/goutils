@@ -30,7 +30,7 @@ func Init(store storage.StorageClient, bucket string, prefix string) error {
 		entitlementPrefix = prefix
 		entitlementStore = store
 		entitlementBucket = bucket
-		entitlementRepo = docstore.NewRepository[*EntitlementClient](entitlementClientFactory)
+		entitlementRepo = docstore.NewRepository(entitlementClientFactory)
 	})
 	return nil
 }

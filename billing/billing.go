@@ -29,7 +29,7 @@ func Init(store storage.StorageClient, bucket string, prefix string) error {
 		billingPrefix = prefix
 		billingStore = store
 		billingBucket = bucket
-		billingRepo = docstore.NewRepository[*BillingClient](billingClientFactory)
+		billingRepo = docstore.NewRepository(billingClientFactory)
 	})
 	return nil
 }
