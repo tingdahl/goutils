@@ -67,11 +67,9 @@ func TestEntitlement_DimensionsLifecycle(t *testing.T) {
 	dims := map[int32]*entitlement.EntitlementDimensionProto{
 		1: {
 			Name: "users_seats",
-			Type: entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_LAST_VALUE,
 		},
 		2: {
 			Name: "storage_gb",
-			Type: entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL,
 		},
 	}
 
@@ -86,8 +84,8 @@ func TestEntitlement_DimensionsLifecycle(t *testing.T) {
 	if loadedDims[1].Name != "users_seats" {
 		t.Errorf("expected dimension 1 name users_seats, got %s", loadedDims[1].Name)
 	}
-	if loadedDims[2].Type != entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL {
-		t.Errorf("expected dimension 2 incremental type, got %v", loadedDims[2].Type)
+	if loadedDims[2].Name != "storage_gb" {
+		t.Errorf("expected dimension 2 name storage_gb, got %s", loadedDims[2].Name)
 	}
 
 	// 2. Add duplicate dimension should fail
@@ -153,10 +151,46 @@ func TestEntitlement_TransactionValidation(t *testing.T) {
 		t.Errorf("expected error for empty description, got nil")
 	}
 
-	// 5. Lease without ExpiresAtUnixMs
+	// 5. Negative ExpiresAtUnixMs
+	txNegativeExpiry := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: time.Now().UnixMilli(),
+		ExpiresAtUnixMs:   -1,
+		DimensionValues:   map[int32]int64{1: 5},
+		Description:       "Negative expiry",
+	}
+	if err := client.AddTransaction(ctx, txNegativeExpiry); err == nil {
+		t.Errorf("expected error for negative expires_at_unix_ms, got nil")
+	}
+
+	// 6. INCREMENTING with ExpiresAtUnixMs set should fail
+	txIncWithExpiry := &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING,
+		EffectiveAtUnixMs: time.Now().UnixMilli(),
+		ExpiresAtUnixMs:   time.Now().UnixMilli() + 10000,
+		DimensionValues:   map[int32]int64{1: 5},
+		Description:       "Incrementing with expiry",
+	}
+	if err := client.AddTransaction(ctx, txIncWithExpiry); err == nil {
+		t.Errorf("expected error for incrementing transaction with expires_at_unix_ms, got nil")
+	}
+
+	// 7. REPLACING with ExpiresAtUnixMs set should fail
+	txRepWithExpiry := &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING,
+		EffectiveAtUnixMs: time.Now().UnixMilli(),
+		ExpiresAtUnixMs:   time.Now().UnixMilli() + 10000,
+		DimensionValues:   map[int32]int64{1: 5},
+		Description:       "Replacing with expiry",
+	}
+	if err := client.AddTransaction(ctx, txRepWithExpiry); err == nil {
+		t.Errorf("expected error for replacing transaction with expires_at_unix_ms, got nil")
+	}
+
+	// 8. LEASE without ExpiresAtUnixMs should fail
 	txLeaseNoExpiry := &entitlement.EntitlementTransactionProto{
 		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE,
 		EffectiveAtUnixMs: time.Now().UnixMilli(),
+		ExpiresAtUnixMs:   0,
 		DimensionValues:   map[int32]int64{1: 5},
 		Description:       "Lease missing expiry",
 	}
@@ -246,12 +280,13 @@ func TestEntitlement_LeasePruning(t *testing.T) {
 
 	now := time.Now().UnixMilli()
 
-	// 1. Permanent (FINAL) transaction - should never prune
+	// 1. Permanent transaction (ExpiresAtUnixMs == 0) - should never prune
 	err = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
-		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_FINAL,
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING,
 		EffectiveAtUnixMs: now,
+		ExpiresAtUnixMs:   0,
 		DimensionValues:   map[int32]int64{1: 100},
-		Description:       "Permanent final transaction",
+		Description:       "Permanent transaction",
 	})
 	if err != nil {
 		t.Fatalf("Add permanent transaction failed: %v", err)
@@ -303,22 +338,13 @@ func TestEntitlement_GetCurrentEntitlementValues(t *testing.T) {
 	}
 
 	// Setup dimensions:
-	// 1: LAST_VALUE (seats)
-	// 2: INCREMENTAL (credits)
-	// 3: INCREMENTAL (unused)
+	// 1: seats
+	// 2: credits
+	// 3: storage_gb
 	err = client.AddDimensions(ctx, map[int32]*entitlement.EntitlementDimensionProto{
-		1: {
-			Name: "seats",
-			Type: entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_LAST_VALUE,
-		},
-		2: {
-			Name: "credits",
-			Type: entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL,
-		},
-		3: {
-			Name: "storage_gb",
-			Type: entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL,
-		},
+		1: {Name: "seats"},
+		2: {Name: "credits"},
+		3: {Name: "storage_gb"},
 	})
 	if err != nil {
 		t.Fatalf("AddDimensions failed: %v", err)
@@ -332,29 +358,42 @@ func TestEntitlement_GetCurrentEntitlementValues(t *testing.T) {
 
 	baseTime := time.Now().UnixMilli()
 
-	// Transaction 1: seats=5, credits=+100 (Effective at baseTime)
+	// Transaction 1 (REPLACING): seats=5, credits=100 (Effective at baseTime)
 	_ = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING,
 		EffectiveAtUnixMs: baseTime,
 		DimensionValues:   map[int32]int64{1: 5, 2: 100},
 		Description:       "Initial purchase",
 	})
 
-	// Transaction 2: seats=10 (Effective at baseTime + 10)
+	// Transaction 2 (REPLACING): seats=10 (Effective at baseTime + 10) -> replaces seats
 	_ = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING,
 		EffectiveAtUnixMs: baseTime + 10,
 		DimensionValues:   map[int32]int64{1: 10},
 		Description:       "Upgrade seats",
 	})
 
-	// Transaction 3: credits=+50 (Effective at baseTime + 20)
+	// Transaction 3 (INCREMENTING): credits=+50 (Effective at baseTime + 20) -> adds to credits
 	_ = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING,
 		EffectiveAtUnixMs: baseTime + 20,
 		DimensionValues:   map[int32]int64{2: 50},
 		Description:       "Add credits",
 	})
 
-	// Transaction 4: unknown dimension 99 (should be ignored gracefully)
+	// Transaction 4: active lease for storage_gb=+10 (Effective at baseTime + 25)
 	_ = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE,
+		EffectiveAtUnixMs: baseTime + 25,
+		ExpiresAtUnixMs:   baseTime + 100000,
+		DimensionValues:   map[int32]int64{3: 10},
+		Description:       "Storage boost lease",
+	})
+
+	// Transaction 5: unknown dimension 99 (should be ignored gracefully)
+	_ = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING,
 		EffectiveAtUnixMs: baseTime + 30,
 		DimensionValues:   map[int32]int64{99: 999},
 		Description:       "Unknown dimension tx",
@@ -362,19 +401,19 @@ func TestEntitlement_GetCurrentEntitlementValues(t *testing.T) {
 
 	vals := client.GetCurrentEntitlementValues()
 
-	// seats (LAST_VALUE) should be 10 (overwritten by latest tx)
+	// seats (REPLACING) should be 10
 	if vals[1] != 10 {
 		t.Errorf("expected seats=10, got %d", vals[1])
 	}
 
-	// credits (INCREMENTAL) should be 100 + 50 = 150
+	// credits (REPLACING 100 then INCREMENTING 50) should be 150
 	if vals[2] != 150 {
 		t.Errorf("expected credits=150, got %d", vals[2])
 	}
 
-	// storage_gb should remain 0
-	if vals[3] != 0 {
-		t.Errorf("expected storage_gb=0, got %d", vals[3])
+	// storage_gb (LEASE 10) should be 10
+	if vals[3] != 10 {
+		t.Errorf("expected storage_gb=10, got %d", vals[3])
 	}
 }
 
@@ -389,7 +428,7 @@ func TestEntitlement_Persistence(t *testing.T) {
 	}
 
 	err = client.AddDimensions(ctx, map[int32]*entitlement.EntitlementDimensionProto{
-		1: {Name: "api_calls", Type: entitlement.EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL},
+		1: {Name: "api_calls"},
 	})
 	if err != nil {
 		t.Fatalf("AddDimensions failed: %v", err)

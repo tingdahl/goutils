@@ -3,21 +3,15 @@ syntax = "proto3";
 package entitlement;
 option go_package = "github.com/tingdahl/goutils/entitlement";
 
-enum EntitlementDimensionType {
-    ENTITLEMENT_DIMENSION_TYPE_LAST_VALUE = 0;
-    ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL = 1;
-}
-
-
 enum EntitlementTransactionType {
-    ENTITLEMENT_TRANSACTION_TYPE_FINAL = 0;
-    ENTITLEMENT_TRANSACTION_TYPE_LEASE = 1;
+    ENTITLEMENT_TRANSACTION_TYPE_REPLACING = 0;
+    ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING = 1;
+    ENTITLEMENT_TRANSACTION_TYPE_LEASE = 2;
 }
 
 // ID is the key used in the EntitlementProto.dimensions map.
 message EntitlementDimensionProto {
     string name = 1;
-    EntitlementDimensionType type = 2;
 }
 
 message EntitlementTransactionProto {

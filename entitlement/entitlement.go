@@ -119,28 +119,29 @@ func (c *EntitlementClient) GetCurrentEntitlementValues() map[int32]int64 {
 	defer c.Rwlock.RUnlock()
 
 	values := map[int32]int64{}
-	types := map[int32]EntitlementDimensionType{}
-	for dimId, dim := range c.data.Dimensions {
+	for dimId := range c.data.Dimensions {
 		values[dimId] = 0
-		types[dimId] = dim.Type
 	}
 
-	//Transactions are sorted by effective_at_unix_ms when they are written so we can just iterate
-	transactions := c.data.Transactions
+	now := time.Now().UnixMilli()
+	// Transactions are sorted by effective_at_unix_ms when they are written so we can just iterate
+	for _, tx := range c.data.Transactions {
+		if tx.TransactionType == EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE && tx.ExpiresAtUnixMs <= now {
+			continue
+		}
 
-	for _, tx := range transactions {
 		for dimId, val := range tx.DimensionValues {
-			if _, ok := types[dimId]; !ok {
+			if _, ok := c.data.Dimensions[dimId]; !ok {
 				slog.Error("Dimension found on transaction but ont in entitlement", "tenant_id", c.TenantID(), "dimension_id", dimId)
 				continue
 			}
 
-			dimType := types[dimId]
-			switch dimType {
-			case EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL:
-				values[dimId] += val
-			case EntitlementDimensionType_ENTITLEMENT_DIMENSION_TYPE_LAST_VALUE:
+			switch tx.TransactionType {
+			case EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING:
 				values[dimId] = val
+			case EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING,
+				EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE:
+				values[dimId] += val
 			}
 		}
 	}
@@ -161,27 +162,38 @@ func (t *EntitlementTransactionProto) validate() error {
 	if t.Description == "" {
 		return errors.New("description cannot be empty")
 	}
-	if t.TransactionType == EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE {
+
+	switch t.TransactionType {
+	case EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE:
 		if t.ExpiresAtUnixMs <= 0 {
-			return errors.New("expires_at_unix_ms must be set")
+			return errors.New("expires_at_unix_ms must be set for lease transaction")
 		}
+		if t.ExpiresAtUnixMs <= t.EffectiveAtUnixMs {
+			return errors.New("expires_at_unix_ms must be after effective_at_unix_ms")
+		}
+	case EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING:
+		if t.ExpiresAtUnixMs != 0 {
+			return errors.New("expires_at_unix_ms must not be set for incrementing transaction")
+		}
+	case EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING:
+		if t.ExpiresAtUnixMs != 0 {
+			return errors.New("expires_at_unix_ms must not be set for replacing transaction")
+		}
+	default:
+		return errors.New("invalid transaction type")
 	}
 
 	return nil
 }
 
 func pruneExpiredTransactions(transactions []*EntitlementTransactionProto) []*EntitlementTransactionProto {
+	now := time.Now().UnixMilli()
 	var keep = []*EntitlementTransactionProto{}
 	for _, tx := range transactions {
-		if tx.TransactionType != EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE {
-			keep = append(keep, tx)
+		if tx.TransactionType == EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE && tx.ExpiresAtUnixMs <= now {
 			continue
 		}
-
-		if tx.ExpiresAtUnixMs > time.Now().UnixMilli() {
-			keep = append(keep, tx)
-			continue
-		}
+		keep = append(keep, tx)
 	}
 
 	return keep
