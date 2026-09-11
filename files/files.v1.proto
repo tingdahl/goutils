@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package files;
+option go_package = "github.com/tingdahl/goutils/files";
+
+enum ReferenceType {
+  UNASSIGNED = 0;
+  TRANSACTION = 1;
+  CHANNEL = 2;
+  GENERIC = 3;
+}
+
+message FileReferenceProto {
+  ReferenceType type = 1;
+  int32 id = 2;
+  string entity_id = 3;
+}
+
+message FileMetadataProto {
+  int32 file_id = 1;
+  string name = 2;
+  string mime_type = 3;
+  int64 size_bytes = 4;
+  int64 created_at_unix_ms = 5;
+  int64 updated_at_unix_ms = 6;
+  string created_by = 7;
+  bytes thumbnail = 8;
+  FileReferenceProto reference = 9;
+}
+
+message FilesCatalogProto {
+  int32 schema_minor_version = 1;
+  string last_modified_by_commit = 2;
+  repeated FileMetadataProto files = 3;
+}
