@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package entitlement;
+option go_package = "github.com/tingdahl/goutils/entitlement";
+
+enum EntitlementDimensionType {
+    ENTITLEMENT_DIMENSION_TYPE_LAST_VALUE = 0;
+    ENTITLEMENT_DIMENSION_TYPE_INCREMENTAL = 1;
+}
+
+
+enum EntitlementTransactionType {
+    ENTITLEMENT_TRANSACTION_TYPE_FINAL = 0;
+    ENTITLEMENT_TRANSACTION_TYPE_LEASE = 1;
+}
+
+// ID is the key used in the EntitlementProto.dimensions map.
+message EntitlementDimensionProto {
+    string name = 1;
+    EntitlementDimensionType type = 2;
+}
+
+message EntitlementTransactionProto {
+    int32 transaction_id = 1;
+    EntitlementTransactionType transaction_type = 2;
+    map<int32, int64> dimension_values = 3;
+    string description = 4;
+    int64 created_at_unix_ms = 5;
+    int64 effective_at_unix_ms = 6;
+    int64 expires_at_unix_ms = 7;
+    string invoice_number = 8;
+    int64 billing_transaction_id = 9;
+}
+
+message EntitlementProto {
+    int32 schema_minor_version = 1;
+    string last_modified_by_commit = 2;
+    int64 tenant_id = 3;
+    int64 updated_at_unix_ms = 4;
+    repeated EntitlementTransactionProto transactions = 5;
+    map<int32, EntitlementDimensionProto> dimensions = 6;
+}

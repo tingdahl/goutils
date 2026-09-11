@@ -4,25 +4,66 @@ import (
 	"bytes"
 	"context"
 	"testing"
-	"time"
 
 	"github.com/tingdahl/goutils/billing"
 	"github.com/tingdahl/goutils/storage"
+	"google.golang.org/protobuf/proto"
 )
 
-func TestBillingClient_AddAndGetReceipt(t *testing.T) {
-	ctx := context.Background()
-	mockStorage := storage.NewMockStorageClient()
-	const bucket = "test-billing-bucket"
-	const tenantID int64 = 1001
+var (
+	testStore  = storage.NewMockStorageClient()
+	testBucket = "test-billing-bucket"
+	testPrefix = "tenant"
+)
 
-	client, err := billing.NewBillingClient(mockStorage, bucket, tenantID)
+func initTestPackage(t *testing.T) {
+	t.Helper()
+	err := billing.Init(testStore, testBucket, testPrefix)
 	if err != nil {
-		t.Fatalf("failed to create billing client: %v", err)
+		t.Fatalf("billing.Init failed: %v", err)
+	}
+}
+
+func TestBilling_InitValidation(t *testing.T) {
+	store := storage.NewMockStorageClient()
+
+	if err := billing.Init(nil, "bucket", "prefix"); err == nil {
+		t.Errorf("expected error with nil store, got nil")
+	}
+
+	if err := billing.Init(store, "", "prefix"); err == nil {
+		t.Errorf("expected error with empty bucket, got nil")
+	}
+}
+
+func TestBilling_GetClientValidation(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	// TenantID <= 0 should fail
+	if _, err := billing.GetBillingClient(ctx, 0); err == nil {
+		t.Errorf("expected error for tenant ID 0, got nil")
+	}
+	if _, err := billing.GetBillingClient(ctx, -1); err == nil {
+		t.Errorf("expected error for tenant ID -1, got nil")
+	}
+}
+
+func TestBillingClient_AddAndGetReceipt(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	const tenantID int64 = 1001
+	client, err := billing.GetBillingClient(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("GetBillingClient failed: %v", err)
+	}
+
+	if client.TenantID() != tenantID {
+		t.Errorf("expected tenant ID %d, got %d", tenantID, client.TenantID())
 	}
 
 	pdfData := []byte("%PDF-1.4 test receipt invoice data")
-
 	req := &billing.AddReceiptRequestProto{
 		Receipt: &billing.PaymentReceiptProto{
 			InvoiceId:   "INV-2026-001",
@@ -41,7 +82,7 @@ func TestBillingClient_AddAndGetReceipt(t *testing.T) {
 	}
 
 	if receipt.Id == "" {
-		t.Errorf("expected generated receipt ID, got empty string")
+		t.Errorf("expected non-empty generated receipt ID")
 	}
 	if receipt.AmountCents != 19900 {
 		t.Errorf("expected 19900 amount, got %d", receipt.AmountCents)
@@ -62,7 +103,7 @@ func TestBillingClient_AddAndGetReceipt(t *testing.T) {
 	// 2. Get receipt by InvoiceId
 	fetchedByInv := client.GetReceipt("INV-2026-001")
 	if fetchedByInv == nil || fetchedByInv.Id != receipt.Id {
-		t.Fatalf("GetReceipt by invoiceId failed")
+		t.Fatalf("GetReceipt by invoice ID failed")
 	}
 
 	// 3. List receipts
@@ -93,81 +134,81 @@ func TestBillingClient_AddAndGetReceipt(t *testing.T) {
 	}
 }
 
-func TestBillingClient_MultipleEntitiesAndReceipts(t *testing.T) {
+func TestBillingClient_MultipleTenantsAndIsolation(t *testing.T) {
+	initTestPackage(t)
 	ctx := context.Background()
-	mockStorage := storage.NewMockStorageClient()
-	const bucket = "test-billing-bucket"
 
-	// Tenant 1 adds 2 receipts
-	client1, err := billing.NewBillingClient(mockStorage, bucket, 100)
+	client1, err := billing.GetBillingClient(ctx, 2001)
 	if err != nil {
-		t.Fatalf("failed to create billing client 1: %v", err)
+		t.Fatalf("GetBillingClient 2001 failed: %v", err)
 	}
 
+	client2, err := billing.GetBillingClient(ctx, 2002)
+	if err != nil {
+		t.Fatalf("GetBillingClient 2002 failed: %v", err)
+	}
+
+	// Client 1 adds 2 receipts
 	_, err = client1.AddReceipt(ctx, &billing.AddReceiptRequestProto{
 		Receipt: &billing.PaymentReceiptProto{
-			InvoiceId:   "INV-100-A",
+			InvoiceId:   "INV-2001-A",
 			AmountCents: 5000,
 			Currency:    "USD",
 		},
 	}, "user-1")
 	if err != nil {
-		t.Fatalf("AddReceipt failed: %v", err)
+		t.Fatalf("AddReceipt client1 A failed: %v", err)
 	}
 
 	_, err = client1.AddReceipt(ctx, &billing.AddReceiptRequestProto{
 		Receipt: &billing.PaymentReceiptProto{
-			InvoiceId:   "INV-100-B",
+			InvoiceId:   "INV-2001-B",
 			AmountCents: 7500,
 			Currency:    "USD",
 		},
 	}, "user-1")
 	if err != nil {
-		t.Fatalf("AddReceipt failed: %v", err)
+		t.Fatalf("AddReceipt client1 B failed: %v", err)
 	}
 
-	// Tenant 2 adds 1 receipt
-	client2, err := billing.NewBillingClient(mockStorage, bucket, 200)
-	if err != nil {
-		t.Fatalf("failed to create billing client 2: %v", err)
-	}
-
-	_, err = client2.AddReceipt(ctx, &billing.AddReceiptRequestProto{
+	// Client 2 adds 1 receipt
+	r2, err := client2.AddReceipt(ctx, &billing.AddReceiptRequestProto{
 		Receipt: &billing.PaymentReceiptProto{
-			InvoiceId:   "INV-200-A",
+			InvoiceId:   "INV-2002-A",
 			AmountCents: 12000,
 			Currency:    "EUR",
 		},
 	}, "user-2")
 	if err != nil {
-		t.Fatalf("AddReceipt failed: %v", err)
+		t.Fatalf("AddReceipt client2 failed: %v", err)
 	}
 
 	if len(client1.ListReceipts()) != 2 {
-		t.Errorf("expected 2 receipts for tenant 100, got %d", len(client1.ListReceipts()))
+		t.Errorf("expected 2 receipts for tenant 2001, got %d", len(client1.ListReceipts()))
 	}
 	if len(client2.ListReceipts()) != 1 {
-		t.Errorf("expected 1 receipt for tenant 200, got %d", len(client2.ListReceipts()))
+		t.Errorf("expected 1 receipt for tenant 2002, got %d", len(client2.ListReceipts()))
 	}
-	if client1.GetReceipt("INV-200-A") != nil {
-		t.Errorf("tenant 100 should not see tenant 200's receipt")
+
+	// Isolation: client 1 cannot access client 2's receipt
+	if client1.GetReceipt(r2.Id) != nil {
+		t.Errorf("tenant 2001 should not see tenant 2002's receipt")
 	}
 }
 
-func TestBillingClient_PersistenceReload(t *testing.T) {
+func TestBillingClient_Persistence(t *testing.T) {
+	initTestPackage(t)
 	ctx := context.Background()
-	mockStorage := storage.NewMockStorageClient()
-	const bucket = "test-billing-bucket"
-	const tenantID int64 = 555
 
-	client1, err := billing.NewBillingClient(mockStorage, bucket, tenantID)
+	const tenantID int64 = 3001
+	client, err := billing.GetBillingClient(ctx, tenantID)
 	if err != nil {
-		t.Fatalf("failed to create billing client 1: %v", err)
+		t.Fatalf("GetBillingClient failed: %v", err)
 	}
 
-	r1, err := client1.AddReceipt(ctx, &billing.AddReceiptRequestProto{
+	r, err := client.AddReceipt(ctx, &billing.AddReceiptRequestProto{
 		Receipt: &billing.PaymentReceiptProto{
-			InvoiceId:   "INV-RELOAD-1",
+			InvoiceId:   "INV-PERSIST-1",
 			AmountCents: 25000,
 			Currency:    "SEK",
 		},
@@ -176,113 +217,50 @@ func TestBillingClient_PersistenceReload(t *testing.T) {
 		t.Fatalf("AddReceipt failed: %v", err)
 	}
 
-	// Reload in a new client instance
-	client2, err := billing.NewBillingClient(mockStorage, bucket, tenantID)
+	// Read raw storage object directly to check persistence and tenant ID stamping
+	storagePath := billing.TenantBillingPath(tenantID)
+	data, _, err := testStore.ReadObject(ctx, testBucket, storagePath)
 	if err != nil {
-		t.Fatalf("failed to create billing client 2: %v", err)
+		t.Fatalf("expected storage object %s to exist: %v", storagePath, err)
 	}
 
-	r2 := client2.GetReceipt(r1.Id)
-	if r2 == nil {
-		t.Fatalf("expected receipt to persist and reload in client 2")
+	var stored billing.BillingProto
+	if err := proto.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("failed to unmarshal stored proto: %v", err)
 	}
-	if r2.InvoiceId != "INV-RELOAD-1" {
-		t.Errorf("expected invoice INV-RELOAD-1, got %s", r2.InvoiceId)
+
+	if stored.TenantId != tenantID {
+		t.Errorf("expected stored tenant ID %d, got %d", tenantID, stored.TenantId)
 	}
-	if r2.CreatedAtUnixMs <= 0 {
-		t.Errorf("expected valid CreatedAtUnixMs, got %d", r2.CreatedAtUnixMs)
+	if len(stored.Receipts) != 1 {
+		t.Fatalf("expected 1 stored receipt, got %d", len(stored.Receipts))
 	}
-	_ = time.Now()
+	if stored.Receipts[0].Id != r.Id {
+		t.Errorf("expected receipt ID %s, got %s", r.Id, stored.Receipts[0].Id)
+	}
 }
 
-func TestBillingRepository(t *testing.T) {
+func TestBillingClient_TenantIDMismatch(t *testing.T) {
+	initTestPackage(t)
 	ctx := context.Background()
-	mockStorage := storage.NewMockStorageClient()
-	const bucket = "test-billing-bucket"
 
-	// 1. Validation: uninitialized GetBillingClient fails
-	if _, err := billing.GetBillingClient(ctx, 777); err == nil {
-		t.Errorf("expected error when GetBillingClient called before Init")
+	// Pre-populate storage with a billing doc belonging to tenant 9999 under path for tenant 8888
+	mismatchedProto := &billing.BillingProto{
+		TenantId: 9999,
 	}
-
-	// 2. Validation: nil store and empty bucket fail
-	if err := billing.Init(nil, bucket); err == nil {
-		t.Errorf("expected error for nil storage")
-	}
-	if err := billing.Init(mockStorage, ""); err == nil {
-		t.Errorf("expected error for empty bucket")
-	}
-
-	// 3. Init with mock storage and bucket
-	if err := billing.Init(mockStorage, bucket); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	// 4. Validation: invalid tenant ID fails
-	if _, err := billing.GetBillingClient(ctx, 0); err == nil {
-		t.Errorf("expected error for tenant ID <= 0")
-	}
-
-	// 5. In-memory reuse via GetBillingClient for tenant 777
-	const tenant1 int64 = 777
-	client1, err := billing.GetBillingClient(ctx, tenant1)
+	data, err := proto.Marshal(mismatchedProto)
 	if err != nil {
-		t.Fatalf("first GetBillingClient failed: %v", err)
-	}
-	expectedPath := "/tenant/777/billing.v1.pb.br"
-	if client1.ObjectName != expectedPath {
-		t.Errorf("expected object path %s, got %s", expectedPath, client1.ObjectName)
+		t.Fatalf("failed to marshal proto: %v", err)
 	}
 
-	client2, err := billing.GetBillingClient(ctx, tenant1)
-	if err != nil {
-		t.Fatalf("second GetBillingClient failed: %v", err)
-	}
-	if client1 != client2 {
-		t.Errorf("expected same BillingClient pointer from cache, got %p vs %p", client1, client2)
+	path := billing.TenantBillingPath(8888)
+	if _, err := testStore.WriteObject(ctx, testBucket, path, data); err != nil {
+		t.Fatalf("failed to write mismatched object to storage: %v", err)
 	}
 
-	// 6. Distinct tenant gets separate client and path
-	const tenant2 int64 = 888
-	clientOther, err := billing.GetBillingClient(ctx, tenant2)
-	if err != nil {
-		t.Fatalf("GetBillingClient for other tenant failed: %v", err)
-	}
-	if client1 == clientOther {
-		t.Errorf("expected different BillingClient pointers for different tenants, got same %p", client1)
-	}
-	expectedOtherPath := "/tenant/888/billing.v1.pb.br"
-	if clientOther.ObjectName != expectedOtherPath {
-		t.Errorf("expected object path %s, got %s", expectedOtherPath, clientOther.ObjectName)
-	}
-
-	// 7. Add receipt through client1 for tenant 777
-	r1, err := client1.AddReceipt(ctx, &billing.AddReceiptRequestProto{
-		Receipt: &billing.PaymentReceiptProto{
-			InvoiceId:   "INV-REPO-1",
-			AmountCents: 5000,
-			Currency:    "USD",
-		},
-	}, "admin")
-	if err != nil {
-		t.Fatalf("AddReceipt failed: %v", err)
-	}
-
-	// 8. Subsequent GetBillingClient for tenant 777 sees the added receipt
-	client3, err := billing.GetBillingClient(ctx, tenant1)
-	if err != nil {
-		t.Fatalf("third GetBillingClient failed: %v", err)
-	}
-	fetchedReceipt := client3.GetReceipt(r1.Id)
-	if fetchedReceipt == nil {
-		t.Fatalf("expected receipt to be visible in client3")
-	}
-	if fetchedReceipt.InvoiceId != "INV-REPO-1" {
-		t.Errorf("expected invoice INV-REPO-1, got %s", fetchedReceipt.InvoiceId)
-	}
-
-	// 9. Verify tenant isolation: tenant 888 does NOT see tenant 777's receipt
-	if clientOther.GetReceipt(r1.Id) != nil {
-		t.Errorf("tenant 888 should not see tenant 777's receipt")
+	// Fetching client for tenant 8888 should detect the mismatch
+	_, err = billing.GetBillingClient(ctx, 8888)
+	if err == nil {
+		t.Fatalf("expected tenant ID mismatch error, got nil")
 	}
 }

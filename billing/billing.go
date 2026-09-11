@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 )
 
 // Init initializes the billing repository for the given storage client and bucket.
-func Init(store storage.StorageClient, bucket string) error {
+func Init(store storage.StorageClient, bucket string, prefix string) error {
 	if store == nil {
 		return errors.New("storage client cannot be nil")
 	}
@@ -25,6 +26,7 @@ func Init(store storage.StorageClient, bucket string) error {
 	}
 
 	billingInitOnce.Do(func() {
+		billingPrefix = prefix
 		billingStore = store
 		billingBucket = bucket
 		billingRepo = docstore.NewRepository[*BillingClient](billingClientFactory)
@@ -41,25 +43,42 @@ func GetBillingClient(ctx context.Context, tenantID int64) (*BillingClient, erro
 		return nil, errors.New("tenant ID must be greater than zero")
 	}
 
-	return billingRepo.Get(ctx, TenantBillingPath(tenantID))
+	client, err := billingRepo.Get(ctx, TenantBillingPath(tenantID))
+	if err != nil {
+		return nil, err
+	}
+
+	client.Rwlock.RLock()
+	existingTenantID := client.data.TenantId
+	client.Rwlock.RUnlock()
+
+	if existingTenantID != 0 && existingTenantID != tenantID {
+		return nil, fmt.Errorf("tenant ID mismatch: expected %d, got %d", tenantID, existingTenantID)
+	}
+
+	client.tenantID = tenantID
+	return client, nil
 }
 
 // TenantBillingPath returns the storage object path for a given tenant ID.
 func TenantBillingPath(tenantID int64) string {
-	return fmt.Sprintf("/tenant/%d/billing.v1.pb.br", tenantID)
+	prefix := strings.Trim(billingPrefix, "/")
+	if prefix == "" {
+		return fmt.Sprintf("%d/%s", tenantID, DbObjectName)
+	}
+	return fmt.Sprintf("%s/%d/%s", prefix, tenantID, DbObjectName)
 }
 
 // BillingClient provides access to billing data and payment receipts for a tenant.
 type BillingClient struct {
 	docstore.Document
-	data BillingProto
+	tenantID int64
+	data     BillingProto
 }
 
 // TenantID returns the tenant ID associated with this billing document.
 func (s *BillingClient) TenantID() int64 {
-	s.Rwlock.RLock()
-	defer s.Rwlock.RUnlock()
-	return s.data.TenantId
+	return s.tenantID
 }
 
 // ListReceipts returns all receipts recorded for this tenant.
@@ -176,18 +195,9 @@ func (s *BillingClient) GetReceiptDownloadLink(ctx context.Context, receiptID st
 	return url, receipt, nil
 }
 
-// NewBillingClient creates a standalone, unmanaged BillingClient using the provided storage client, bucket name, and optional tenant ID.
-func NewBillingClient(store storage.StorageClient, bucket string, tenantID ...int64) (*BillingClient, error) {
-	objectPath := DbObjectName
-	if len(tenantID) > 0 && tenantID[0] > 0 {
-		objectPath = TenantBillingPath(tenantID[0])
-	}
-	return newBillingClient(store, bucket, objectPath)
-}
-
 // Exported constants and errors.
 const (
-	DbObjectName   string = "billing.v1.pb"
+	DbObjectName   string = "billing.v1.pb.br"
 	ReceiptsPrefix string = "billing/receipts"
 	SchemaMinor    int32  = 0
 )
@@ -204,17 +214,14 @@ var (
 	billingRepo     *docstore.Repository[*BillingClient]
 	billingStore    storage.StorageClient
 	billingBucket   string
+	billingPrefix   string
 )
 
 func billingClientFactory(ctx context.Context, objectPath string) (*BillingClient, error) {
-	return newBillingClient(billingStore, billingBucket, objectPath)
-}
-
-func newBillingClient(store storage.StorageClient, bucket, objectPath string) (*BillingClient, error) {
-	if store == nil {
+	if billingStore == nil {
 		return nil, errors.New("storage client cannot be nil")
 	}
-	if bucket == "" {
+	if billingBucket == "" {
 		return nil, errors.New("bucket name cannot be empty")
 	}
 	if objectPath == "" {
@@ -224,8 +231,8 @@ func newBillingClient(store storage.StorageClient, bucket, objectPath string) (*
 	client := &BillingClient{}
 	client.Document = docstore.Document{
 		Client:               client,
-		Storage:              store,
-		BucketName:           bucket,
+		Storage:              billingStore,
+		BucketName:           billingBucket,
 		ObjectName:           objectPath,
 		ProtoMsg:             &client.data,
 		SupportedSchemaMinor: SchemaMinor,
@@ -233,13 +240,6 @@ func newBillingClient(store storage.StorageClient, bucket, objectPath string) (*
 
 	if err := client.DoLoad(); err != nil {
 		return nil, fmt.Errorf("failed to load billing database from storage: %w", err)
-	}
-
-	var tenantID int64
-	if n, _ := fmt.Sscanf(objectPath, "/tenant/%d/", &tenantID); n == 1 && tenantID > 0 {
-		if client.data.TenantId == 0 {
-			client.data.TenantId = tenantID
-		}
 	}
 
 	return client, nil
@@ -259,6 +259,7 @@ func (s *BillingClient) GetSchemaMinorVersion() int32 {
 
 func (s *BillingClient) StampVersion(msg proto.Message, schemaMinor int32, commit string) {
 	doc := msg.(*BillingProto)
+	doc.TenantId = s.tenantID
 	doc.SchemaMinorVersion = schemaMinor
 	doc.LastModifiedByCommit = commit
 }
