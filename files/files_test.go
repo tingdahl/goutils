@@ -52,6 +52,16 @@ func TestFilesClient_CRUD(t *testing.T) {
 		t.Fatalf("read data does not match original data")
 	}
 
+	// 2b. Get signed URL
+	signedURL, err := client.GetSignedURL(ctx, meta.FileId, 60)
+	if err != nil {
+		t.Fatalf("failed to get signed URL: %v", err)
+	}
+	expectedURL := "https://mock-storage/tenants/42/files/1"
+	if signedURL != expectedURL {
+		t.Fatalf("expected signed URL %s, got %s", expectedURL, signedURL)
+	}
+
 	// 3. Get metadata
 	gotMeta := client.GetFile(meta.FileId)
 	if gotMeta == nil {

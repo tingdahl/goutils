@@ -194,6 +194,22 @@ func (f *FilesClient) ReadFileContent(ctx context.Context, fileId int32) ([]byte
 	return data, err
 }
 
+// GetSignedURL generates a presigned download URL for the file valid for durationSeconds.
+// If durationSeconds <= 0, a default of 60 seconds is used.
+func (f *FilesClient) GetSignedURL(ctx context.Context, fileId int32, durationSeconds int) (string, error) {
+	if fileId <= 0 {
+		return "", errors.New("invalid file id")
+	}
+	if filesStore == nil {
+		return "", errors.New("storage client cannot be nil")
+	}
+	if durationSeconds <= 0 {
+		durationSeconds = 60
+	}
+	rawObj := FileRawObjectName(f.prefix, fileId)
+	return filesStore.GetObjectLink(ctx, rawObj, durationSeconds, "")
+}
+
 // AddFile registers a new file metadata record in the catalog and assigns a unique file_id.
 func (f *FilesClient) AddFile(ctx context.Context, file *FileMetadataProto, userId string) (*FileMetadataProto, error) {
 	var createdFile *FileMetadataProto

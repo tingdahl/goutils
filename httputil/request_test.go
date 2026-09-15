@@ -103,3 +103,27 @@ func TestGetRouteParam(t *testing.T) {
 		t.Error("Expected error for missing param")
 	}
 }
+
+func TestWriteSignedURLResponse(t *testing.T) {
+	rr := httptest.NewRecorder()
+	url := "https://storage.example.com/file/1?sig=abc"
+	WriteSignedURLResponse(rr, url)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
+	if !strings.HasPrefix(rr.Header().Get(HeaderContentType), ContentTypeJSON) {
+		t.Errorf("Expected JSON content type, got %s", rr.Header().Get(HeaderContentType))
+	}
+	if rr.Header().Get(HeaderCacheControl) != "no-cache, no-store, must-revalidate" {
+		t.Errorf("Expected no-cache cache control, got %s", rr.Header().Get(HeaderCacheControl))
+	}
+
+	var resp SignedURLResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode signed URL response: %v", err)
+	}
+	if resp.URL != url {
+		t.Errorf("Expected URL %q, got %q", url, resp.URL)
+	}
+}

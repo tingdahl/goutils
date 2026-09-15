@@ -20,6 +20,25 @@ type JSONErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// SetNoCacheHeaders sets Cache-Control, Pragma, and Expires headers to prevent caching.
+func SetNoCacheHeaders(w http.ResponseWriter) {
+	w.Header().Set(HeaderCacheControl, "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
+// SignedURLResponse represents the standard JSON payload containing a presigned storage URL.
+type SignedURLResponse struct {
+	URL string `json:"url"`
+}
+
+// WriteSignedURLResponse writes a standard JSON response {"url": "..."} with no-cache headers.
+func WriteSignedURLResponse(w http.ResponseWriter, url string) {
+	SetNoCacheHeaders(w)
+	w.Header().Set(HeaderContentType, ContentTypeJSONUTF8)
+	_ = json.NewEncoder(w).Encode(SignedURLResponse{URL: url})
+}
+
 // WriteJSONError writes a JSON error response {"error": "..."} with the given status code and sets Content-Type.
 func WriteJSONError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set(HeaderContentType, ContentTypeJSONUTF8)
