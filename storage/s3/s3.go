@@ -10,10 +10,12 @@ import (
 	"io"
 	"time"
 
+	"github.com/tingdahl/goutils/config"
 	"github.com/tingdahl/goutils/storage"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -22,12 +24,15 @@ import (
 type S3StorageClient struct {
 	client        *s3.Client
 	presignClient *s3.PresignClient
+	bucket        string
 }
 
 const (
-	EnvS3Bucket   = "S3_BUCKET"
-	EnvS3Region   = "S3_REGION"
-	EnvS3Endpoint = "S3_ENDPOINT"
+	EnvS3Bucket           = "S3_BUCKET"
+	EnvS3Region           = "S3_REGION"
+	EnvS3Endpoint         = "S3_ENDPOINT"
+	EnvAWSAccessKeyID     = "AWS_ACCESS_KEY_ID"
+	EnvAWSSecretAccessKey = "AWS_SECRET_ACCESS_KEY"
 
 	// MaxReadObjectSizeBytes limits the maximum object payload read into memory to prevent OOM (100 MB).
 	MaxReadObjectSizeBytes int64 = 100 << 20
@@ -35,25 +40,48 @@ const (
 
 var ErrObjectTooLarge = errors.New("storage: object exceeds maximum permitted read size (100 MB)")
 
-// Init configures the storage package constructor to instantiate an S3StorageClient.
-func Init(region string, endpoint string) error {
-	storage.SetStorageConstructor(func() (storage.StorageClient, error) {
-		return NewS3StorageClient(context.Background(), region, endpoint)
-	})
+func getVal(opts map[string]string, key string) string {
+	if opts != nil {
+		if v, ok := opts[key]; ok && v != "" {
+			return v
+		}
+	}
+	return config.GetConfigString(key)
+}
+
+// Init registers NewS3StorageClient as the constructor in storage.
+func Init() error {
+	storage.SetStorageConstructor(NewS3StorageClient)
 	return nil
 }
 
-// NewS3StorageClient creates a new S3 client configured for the given region and endpoint.
-func NewS3StorageClient(ctx context.Context, region string, endpoint string) (storage.StorageClient, error) {
-	var opts []func(*config.LoadOptions) error
-	if region != "" {
-		opts = append(opts, config.WithRegion(region))
-	}
-	if endpoint != "" {
-		opts = append(opts, config.WithBaseEndpoint(endpoint))
+// NewS3StorageClient creates a new S3 client configured from the provided options or environment.
+func NewS3StorageClient(opts map[string]string) (storage.StorageClient, error) {
+	bucket := getVal(opts, EnvS3Bucket)
+	if bucket == "" {
+		return nil, errors.New("s3: S3_BUCKET is required but not set")
 	}
 
-	cfg, err := config.LoadDefaultConfig(ctx, opts...)
+	region := getVal(opts, EnvS3Region)
+	endpoint := getVal(opts, EnvS3Endpoint)
+	accessKey := getVal(opts, EnvAWSAccessKeyID)
+	secretKey := getVal(opts, EnvAWSSecretAccessKey)
+
+	ctx := context.Background()
+	var loadOpts []func(*awsconfig.LoadOptions) error
+	if region != "" {
+		loadOpts = append(loadOpts, awsconfig.WithRegion(region))
+	}
+	if endpoint != "" {
+		loadOpts = append(loadOpts, awsconfig.WithBaseEndpoint(endpoint))
+	}
+	if accessKey != "" && secretKey != "" {
+		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		))
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
 	}
@@ -64,13 +92,14 @@ func NewS3StorageClient(ctx context.Context, region string, endpoint string) (st
 	return &S3StorageClient{
 		client:        client,
 		presignClient: presignClient,
+		bucket:        bucket,
 	}, nil
 }
 
 // GetCurrentRevision fetches the ETag of an object via HeadObject.
-func (s *S3StorageClient) GetCurrentRevision(ctx context.Context, bucket string, object string) (string, error) {
+func (s *S3StorageClient) GetCurrentRevision(ctx context.Context, object string) (string, error) {
 	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(object),
 	})
 	if err != nil {
@@ -112,8 +141,8 @@ func preparePutObjectInput(bucket string, file string, data []byte) (*s3.PutObje
 }
 
 // WriteObject writes data to S3, compressing with Brotli if key ends with .br.
-func (s *S3StorageClient) WriteObject(ctx context.Context, bucket string, file string, data []byte) (string, error) {
-	putInput, err := preparePutObjectInput(bucket, file, data)
+func (s *S3StorageClient) WriteObject(ctx context.Context, file string, data []byte) (string, error) {
+	putInput, err := preparePutObjectInput(s.bucket, file, data)
 	if err != nil {
 		return "", err
 	}
@@ -129,14 +158,14 @@ func (s *S3StorageClient) WriteObject(ctx context.Context, bucket string, file s
 }
 
 // WriteRawObject writes raw data directly to S3 without compression.
-func (s *S3StorageClient) WriteRawObject(ctx context.Context, bucket string, file string, data []byte) (string, error) {
+func (s *S3StorageClient) WriteRawObject(ctx context.Context, file string, data []byte) (string, error) {
 	contentType := storage.ContentTypeFromKey(file)
 	var contentEncoding *string
 	if storage.IsBrotliKey(file) {
 		contentEncoding = aws.String("br")
 	}
 	out, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:            aws.String(bucket),
+		Bucket:            aws.String(s.bucket),
 		Key:               aws.String(file),
 		Body:              bytes.NewReader(data),
 		ContentType:       aws.String(contentType),
@@ -153,8 +182,8 @@ func (s *S3StorageClient) WriteRawObject(ctx context.Context, bucket string, fil
 }
 
 // WriteObjectIfRevisionMatch writes conditionally based on ETag match.
-func (s *S3StorageClient) WriteObjectIfRevisionMatch(ctx context.Context, bucket string, file string, data []byte, revision string) (string, error) {
-	putInput, err := preparePutObjectInput(bucket, file, data)
+func (s *S3StorageClient) WriteObjectIfRevisionMatch(ctx context.Context, file string, data []byte, revision string) (string, error) {
+	putInput, err := preparePutObjectInput(s.bucket, file, data)
 	if err != nil {
 		return "", err
 	}
@@ -172,7 +201,7 @@ func (s *S3StorageClient) WriteObjectIfRevisionMatch(ctx context.Context, bucket
 	}
 
 	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(file),
 	})
 	if err != nil {
@@ -194,9 +223,9 @@ func (s *S3StorageClient) WriteObjectIfRevisionMatch(ctx context.Context, bucket
 }
 
 // ReadRawObject reads object data without Brotli decompression.
-func (s *S3StorageClient) ReadRawObject(ctx context.Context, bucket string, file string) ([]byte, string, error) {
+func (s *S3StorageClient) ReadRawObject(ctx context.Context, file string) ([]byte, string, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(file),
 	})
 	if err != nil {
@@ -221,8 +250,8 @@ func (s *S3StorageClient) ReadRawObject(ctx context.Context, bucket string, file
 }
 
 // ReadObject reads object data, automatically decompressing Brotli if key ends with .br.
-func (s *S3StorageClient) ReadObject(ctx context.Context, bucket string, file string) ([]byte, string, error) {
-	data, etag, err := s.ReadRawObject(ctx, bucket, file)
+func (s *S3StorageClient) ReadObject(ctx context.Context, file string) ([]byte, string, error) {
+	data, etag, err := s.ReadRawObject(ctx, file)
 	if err != nil {
 		return nil, "", err
 	}
@@ -239,9 +268,9 @@ func (s *S3StorageClient) ReadObject(ctx context.Context, bucket string, file st
 }
 
 // GetObjectLink generates a presigned GET URL.
-func (s *S3StorageClient) GetObjectLink(ctx context.Context, bucket string, object string, duration int, IPAddress string) (string, error) {
+func (s *S3StorageClient) GetObjectLink(ctx context.Context, object string, duration int, IPAddress string) (string, error) {
 	input := &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(object),
 	}
 	if storage.IsBrotliKey(object) {
@@ -258,9 +287,9 @@ func (s *S3StorageClient) GetObjectLink(ctx context.Context, bucket string, obje
 }
 
 // GetUploadLink generates a presigned PUT URL.
-func (s *S3StorageClient) GetUploadLink(ctx context.Context, bucket string, object string, duration int, contentType string) (string, error) {
+func (s *S3StorageClient) GetUploadLink(ctx context.Context, object string, duration int, contentType string) (string, error) {
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(object),
 	}
 	if contentType != "" {
@@ -276,20 +305,20 @@ func (s *S3StorageClient) GetUploadLink(ctx context.Context, bucket string, obje
 }
 
 // DeleteObject removes an object from S3.
-func (s *S3StorageClient) DeleteObject(ctx context.Context, bucket string, object string) error {
+func (s *S3StorageClient) DeleteObject(ctx context.Context, object string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(object),
 	})
 	return err
 }
 
 // ListPrefixes lists directory-like common prefixes for a delimiter.
-func (s *S3StorageClient) ListPrefixes(ctx context.Context, bucket string, prefix string, delimiter string) ([]string, error) {
+func (s *S3StorageClient) ListPrefixes(ctx context.Context, prefix string, delimiter string) ([]string, error) {
 	var prefixes []string
 
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket:    aws.String(bucket),
+		Bucket:    aws.String(s.bucket),
 		Prefix:    aws.String(prefix),
 		Delimiter: aws.String(delimiter),
 	})
@@ -311,11 +340,11 @@ func (s *S3StorageClient) ListPrefixes(ctx context.Context, bucket string, prefi
 }
 
 // ListObjects lists objects matching a prefix.
-func (s *S3StorageClient) ListObjects(ctx context.Context, bucket string, prefix string) ([]storage.StorageObject, error) {
+func (s *S3StorageClient) ListObjects(ctx context.Context, prefix string) ([]storage.StorageObject, error) {
 	var objects []storage.StorageObject
 
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(s.bucket),
 		Prefix: aws.String(prefix),
 	})
 

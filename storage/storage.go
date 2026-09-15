@@ -6,17 +6,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/tingdahl/goutils/config"
 )
 
 // Standard MIME content types
 const (
-	ContentTypeApplicationJSON       = "application/json"
-	ContentTypeApplicationProtobuf   = "application/x-protobuf"
-	ContentTypeApplicationJavaScript = "application/javascript"
-	ContentTypeTextHTML              = "text/html"
-	ContentTypeTextPlain             = "text/plain"
+	ContentTypeApplicationJSON        = "application/json"
+	ContentTypeApplicationProtobuf    = "application/x-protobuf"
+	ContentTypeApplicationJavaScript  = "application/javascript"
+	ContentTypeTextHTML               = "text/html"
+	ContentTypeTextPlain              = "text/plain"
 	ContentTypeApplicationOctetStream = "application/octet-stream"
 )
 
@@ -64,17 +62,17 @@ type StorageObject struct {
 
 // StorageClient defines the common interface for cloud object storage (S3, GCS).
 type StorageClient interface {
-	GetCurrentRevision(ctx context.Context, bucket string, object string) (string, error)
-	WriteObject(ctx context.Context, bucket string, object string, data []byte) (string, error)
-	WriteRawObject(ctx context.Context, bucket string, object string, data []byte) (string, error)
-	WriteObjectIfRevisionMatch(ctx context.Context, bucket string, object string, data []byte, revision string) (string, error)
-	ReadObject(ctx context.Context, bucket string, object string) ([]byte, string, error)
-	ReadRawObject(ctx context.Context, bucket string, object string) ([]byte, string, error)
-	GetObjectLink(ctx context.Context, bucket string, object string, duration int, IPAddress string) (string, error)
-	GetUploadLink(ctx context.Context, bucket string, object string, duration int, contentType string) (string, error)
-	DeleteObject(ctx context.Context, bucket string, object string) error
-	ListPrefixes(ctx context.Context, bucket string, prefix string, delimiter string) ([]string, error)
-	ListObjects(ctx context.Context, bucket string, prefix string) ([]StorageObject, error)
+	GetCurrentRevision(ctx context.Context, object string) (string, error)
+	WriteObject(ctx context.Context, object string, data []byte) (string, error)
+	WriteRawObject(ctx context.Context, object string, data []byte) (string, error)
+	WriteObjectIfRevisionMatch(ctx context.Context, object string, data []byte, revision string) (string, error)
+	ReadObject(ctx context.Context, object string) ([]byte, string, error)
+	ReadRawObject(ctx context.Context, object string) ([]byte, string, error)
+	GetObjectLink(ctx context.Context, object string, duration int, IPAddress string) (string, error)
+	GetUploadLink(ctx context.Context, object string, duration int, contentType string) (string, error)
+	DeleteObject(ctx context.Context, object string) error
+	ListPrefixes(ctx context.Context, prefix string, delimiter string) ([]string, error)
+	ListObjects(ctx context.Context, prefix string) ([]StorageObject, error)
 }
 
 const NoRevision = ""
@@ -84,39 +82,33 @@ var (
 	WriteFailedError   = errors.New("Failed to write to storage. Please try again.")
 )
 
+// Constructor is the signature for storage client factory functions.
+type Constructor func(opts map[string]string) (StorageClient, error)
+
 var (
 	Environment string
-	BucketName  string
-	constructor func() (StorageClient, error)
+	constructor Constructor
 )
 
 // NewStorageClient creates a new StorageClient using the registered constructor.
-func NewStorageClient() (StorageClient, error) {
+// If option maps are provided, they are merged in order and passed to the constructor.
+// If no options are provided, the constructor uses environment/config defaults.
+func NewStorageClient(opts ...map[string]string) (StorageClient, error) {
 	if constructor == nil {
 		return nil, errors.New("storage client constructor not initialized")
 	}
-	return constructor()
+	merged := make(map[string]string)
+	for _, opt := range opts {
+		for k, v := range opt {
+			merged[k] = v
+		}
+	}
+	return constructor(merged)
 }
 
 // SetStorageConstructor sets the factory function for creating StorageClient instances.
-func SetStorageConstructor(c func() (StorageClient, error)) {
+func SetStorageConstructor(c Constructor) {
 	constructor = c
-}
-
-// DetermineBucketName retrieves the bucket name from config (S3_APPDATA_NAME).
-func DetermineBucketName() string {
-	return config.Config().GetS3AppDataBucket()
-}
-
-// Init initializes the default bucket name from configuration.
-func Init() error {
-	if BucketName == "" {
-		BucketName = DetermineBucketName()
-	}
-	if BucketName == "" {
-		return errors.New("environment variable S3_APPDATA_NAME is required but not set")
-	}
-	return nil
 }
 
 // CheckHealth verifies that the storage client constructor is initialized and can produce a valid client.

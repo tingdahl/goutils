@@ -3,7 +3,6 @@
 package gcs
 
 import (
-	"context"
 	"errors"
 
 	"github.com/tingdahl/goutils/storage"
@@ -17,6 +16,6 @@ func Init() error {
 }
 
 // NewGoogleStorageClient returns an error because GCS support was excluded at build time.
-func NewGoogleStorageClient(ctx context.Context) (storage.StorageClient, error) {
+func NewGoogleStorageClient(opts map[string]string) (storage.StorageClient, error) {
 	return nil, errExcluded
 }

@@ -27,7 +27,6 @@ var (
 	filesInitOnce sync.Once
 	filesRepo     *docstore.Repository[*FilesClient]
 	filesStore    storage.StorageClient
-	filesBucket   string
 )
 
 // FilesCatalogObjectName returns the object key for the files catalog protobuf document.
@@ -48,18 +47,14 @@ func FileRawObjectName(prefix string, fileId int32) string {
 	return fmt.Sprintf("%s/files/%d", cleanPrefix, fileId)
 }
 
-// Init initializes the files repository with the given storage client and bucket.
-func Init(store storage.StorageClient, bucket string, opts ...docstore.RepositoryOption) error {
+// Init initializes the files repository with the given storage client.
+func Init(store storage.StorageClient, opts ...docstore.RepositoryOption) error {
 	if store == nil {
 		return errors.New("storage client cannot be nil")
-	}
-	if bucket == "" {
-		return errors.New("bucket name cannot be empty")
 	}
 
 	filesInitOnce.Do(func() {
 		filesStore = store
-		filesBucket = bucket
 		filesRepo = docstore.NewRepository(filesClientFactory, opts...)
 	})
 	return nil
@@ -70,7 +65,6 @@ func ResetForTesting() {
 	filesInitOnce = sync.Once{}
 	filesRepo = nil
 	filesStore = nil
-	filesBucket = ""
 }
 
 // GetFilesClient retrieves the cached FilesClient for the given storage prefix.
@@ -115,9 +109,6 @@ func filesClientFactory(ctx context.Context, objectPath string) (*FilesClient, e
 	if filesStore == nil {
 		return nil, errors.New("storage client cannot be nil")
 	}
-	if filesBucket == "" {
-		return nil, errors.New("bucket name cannot be empty")
-	}
 	if objectPath == "" {
 		return nil, errors.New("object path cannot be empty")
 	}
@@ -131,7 +122,6 @@ func filesClientFactory(ctx context.Context, objectPath string) (*FilesClient, e
 	fc.Document = docstore.Document{
 		Client:               fc,
 		Storage:              filesStore,
-		BucketName:           filesBucket,
 		ObjectName:           objectPath,
 		ProtoMsg:             &fc.data,
 		SupportedSchemaMinor: SchemaMinor,
@@ -193,14 +183,14 @@ func (f *FilesClient) GetFilesByReference(refType ReferenceType, refId int32, en
 // WriteFileContent writes the raw binary content of a file to object storage.
 func (f *FilesClient) WriteFileContent(ctx context.Context, fileId int32, data []byte) error {
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	_, err := filesStore.WriteObject(ctx, filesBucket, rawObj, data)
+	_, err := filesStore.WriteObject(ctx, rawObj, data)
 	return err
 }
 
 // ReadFileContent reads the raw binary content of a file from object storage.
 func (f *FilesClient) ReadFileContent(ctx context.Context, fileId int32) ([]byte, error) {
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	data, _, err := filesStore.ReadRawObject(ctx, filesBucket, rawObj)
+	data, _, err := filesStore.ReadRawObject(ctx, rawObj)
 	return data, err
 }
 
@@ -303,6 +293,6 @@ func (f *FilesClient) DeleteFile(ctx context.Context, fileId int32) error {
 	}
 
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	_ = filesStore.DeleteObject(ctx, filesBucket, rawObj)
+	_ = filesStore.DeleteObject(ctx, rawObj)
 	return nil
 }

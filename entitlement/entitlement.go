@@ -17,19 +17,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Init initializes the entitlement repository for the given storage client and bucket.
-func Init(store storage.StorageClient, bucket string, prefix string) error {
+// Init initializes the entitlement repository for the given storage client and prefix.
+func Init(store storage.StorageClient, prefix string) error {
 	if store == nil {
 		return errors.New("storage client cannot be nil")
-	}
-	if bucket == "" {
-		return errors.New("bucket name cannot be empty")
 	}
 
 	entitlementInitOnce.Do(func() {
 		entitlementPrefix = prefix
 		entitlementStore = store
-		entitlementBucket = bucket
 		entitlementRepo = docstore.NewRepository(entitlementClientFactory)
 	})
 	return nil
@@ -264,16 +260,12 @@ var (
 	entitlementInitOnce sync.Once
 	entitlementRepo     *docstore.Repository[*EntitlementClient]
 	entitlementStore    storage.StorageClient
-	entitlementBucket   string
 	entitlementPrefix   string
 )
 
 func entitlementClientFactory(ctx context.Context, objectPath string) (*EntitlementClient, error) {
 	if entitlementStore == nil {
 		return nil, errors.New("storage client cannot be nil")
-	}
-	if entitlementBucket == "" {
-		return nil, errors.New("bucket name cannot be empty")
 	}
 	if objectPath == "" {
 		return nil, errors.New("object path cannot be empty")
@@ -283,7 +275,6 @@ func entitlementClientFactory(ctx context.Context, objectPath string) (*Entitlem
 	client.Document = docstore.Document{
 		Client:               client,
 		Storage:              entitlementStore,
-		BucketName:           entitlementBucket,
 		ObjectName:           objectPath,
 		ProtoMsg:             &client.data,
 		SupportedSchemaMinor: SchemaMinor,

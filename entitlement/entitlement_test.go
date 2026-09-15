@@ -12,27 +12,20 @@ import (
 
 var (
 	testStore  = storage.NewMockStorageClient()
-	testBucket = "test-entitlement-bucket"
 	testPrefix = "entitlements"
 )
 
 func initTestPackage(t *testing.T) {
 	t.Helper()
-	err := entitlement.Init(testStore, testBucket, testPrefix)
+	err := entitlement.Init(testStore, testPrefix)
 	if err != nil {
 		t.Fatalf("entitlement.Init failed: %v", err)
 	}
 }
 
 func TestEntitlement_InitValidation(t *testing.T) {
-	store := storage.NewMockStorageClient()
-
-	if err := entitlement.Init(nil, "bucket", "prefix"); err == nil {
+	if err := entitlement.Init(nil, "prefix"); err == nil {
 		t.Errorf("expected error with nil store, got nil")
-	}
-
-	if err := entitlement.Init(store, "", "prefix"); err == nil {
-		t.Errorf("expected error with empty bucket, got nil")
 	}
 }
 
@@ -445,7 +438,7 @@ func TestEntitlement_Persistence(t *testing.T) {
 
 	// Verify object exists at expected path in storage: <prefix>/<tenantID>/entitlement.v1.pb.br
 	expectedKey := "entitlements/6001/entitlement.v1.pb.br"
-	data, _, err := testStore.ReadObject(ctx, testBucket, expectedKey)
+	data, _, err := testStore.ReadObject(ctx, expectedKey)
 	if err != nil {
 		t.Fatalf("expected storage object %s to exist: %v", expectedKey, err)
 	}
@@ -495,7 +488,7 @@ func TestEntitlement_TenantIDMismatch(t *testing.T) {
 	}
 
 	path := "entitlements/8888/entitlement.v1.pb.br"
-	if _, err := testStore.WriteObject(ctx, testBucket, path, data); err != nil {
+	if _, err := testStore.WriteObject(ctx, path, data); err != nil {
 		t.Fatalf("failed to write mismatched object to storage: %v", err)
 	}
 

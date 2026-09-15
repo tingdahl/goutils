@@ -18,21 +18,15 @@ var (
 
 func initTestPackage(t *testing.T) {
 	t.Helper()
-	err := billing.Init(testStore, testBucket, testPrefix)
+	err := billing.Init(testStore, testPrefix)
 	if err != nil {
 		t.Fatalf("billing.Init failed: %v", err)
 	}
 }
 
 func TestBilling_InitValidation(t *testing.T) {
-	store := storage.NewMockStorageClient()
-
-	if err := billing.Init(nil, "bucket", "prefix"); err == nil {
+	if err := billing.Init(nil, "prefix"); err == nil {
 		t.Errorf("expected error with nil store, got nil")
-	}
-
-	if err := billing.Init(store, "", "prefix"); err == nil {
-		t.Errorf("expected error with empty bucket, got nil")
 	}
 }
 
@@ -219,7 +213,7 @@ func TestBillingClient_Persistence(t *testing.T) {
 
 	// Read raw storage object directly to check persistence and tenant ID stamping
 	storagePath := billing.TenantBillingPath(tenantID)
-	data, _, err := testStore.ReadObject(ctx, testBucket, storagePath)
+	data, _, err := testStore.ReadObject(ctx, storagePath)
 	if err != nil {
 		t.Fatalf("expected storage object %s to exist: %v", storagePath, err)
 	}
@@ -254,7 +248,7 @@ func TestBillingClient_TenantIDMismatch(t *testing.T) {
 	}
 
 	path := billing.TenantBillingPath(8888)
-	if _, err := testStore.WriteObject(ctx, testBucket, path, data); err != nil {
+	if _, err := testStore.WriteObject(ctx, path, data); err != nil {
 		t.Fatalf("failed to write mismatched object to storage: %v", err)
 	}
 

@@ -27,13 +27,13 @@ func newMockDocStorage() *mockDocStorage {
 	}
 }
 
-func (m *mockDocStorage) GetCurrentRevision(ctx context.Context, bucket string, object string) (string, error) {
+func (m *mockDocStorage) GetCurrentRevision(ctx context.Context, object string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.revisions[object], nil
 }
 
-func (m *mockDocStorage) WriteObject(ctx context.Context, bucket string, object string, data []byte) (string, error) {
+func (m *mockDocStorage) WriteObject(ctx context.Context, object string, data []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.data[object] = data
@@ -41,11 +41,11 @@ func (m *mockDocStorage) WriteObject(ctx context.Context, bucket string, object 
 	return "rev-1", nil
 }
 
-func (m *mockDocStorage) WriteRawObject(ctx context.Context, bucket string, object string, data []byte) (string, error) {
-	return m.WriteObject(ctx, bucket, object, data)
+func (m *mockDocStorage) WriteRawObject(ctx context.Context, object string, data []byte) (string, error) {
+	return m.WriteObject(ctx, object, data)
 }
 
-func (m *mockDocStorage) WriteObjectIfRevisionMatch(ctx context.Context, bucket string, object string, data []byte, revision string) (string, error) {
+func (m *mockDocStorage) WriteObjectIfRevisionMatch(ctx context.Context, object string, data []byte, revision string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -69,7 +69,7 @@ func (m *mockDocStorage) WriteObjectIfRevisionMatch(ctx context.Context, bucket 
 	return nextRev, nil
 }
 
-func (m *mockDocStorage) ReadRawObject(ctx context.Context, bucket string, object string) ([]byte, string, error) {
+func (m *mockDocStorage) ReadRawObject(ctx context.Context, object string) ([]byte, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data, exists := m.data[object]
@@ -79,27 +79,27 @@ func (m *mockDocStorage) ReadRawObject(ctx context.Context, bucket string, objec
 	return data, m.revisions[object], nil
 }
 
-func (m *mockDocStorage) ReadObject(ctx context.Context, bucket string, object string) ([]byte, string, error) {
-	return m.ReadRawObject(ctx, bucket, object)
+func (m *mockDocStorage) ReadObject(ctx context.Context, object string) ([]byte, string, error) {
+	return m.ReadRawObject(ctx, object)
 }
 
-func (m *mockDocStorage) GetObjectLink(ctx context.Context, bucket string, object string, duration int, IPAddress string) (string, error) {
+func (m *mockDocStorage) GetObjectLink(ctx context.Context, object string, duration int, IPAddress string) (string, error) {
 	return "", nil
 }
-func (m *mockDocStorage) GetUploadLink(ctx context.Context, bucket string, object string, duration int, contentType string) (string, error) {
+func (m *mockDocStorage) GetUploadLink(ctx context.Context, object string, duration int, contentType string) (string, error) {
 	return "", nil
 }
-func (m *mockDocStorage) DeleteObject(ctx context.Context, bucket string, object string) error {
+func (m *mockDocStorage) DeleteObject(ctx context.Context, object string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.data, object)
 	delete(m.revisions, object)
 	return nil
 }
-func (m *mockDocStorage) ListPrefixes(ctx context.Context, bucket string, prefix string, delimiter string) ([]string, error) {
+func (m *mockDocStorage) ListPrefixes(ctx context.Context, prefix string, delimiter string) ([]string, error) {
 	return nil, nil
 }
-func (m *mockDocStorage) ListObjects(ctx context.Context, bucket string, prefix string) ([]storage.StorageObject, error) {
+func (m *mockDocStorage) ListObjects(ctx context.Context, prefix string) ([]storage.StorageObject, error) {
 	return nil, nil
 }
 

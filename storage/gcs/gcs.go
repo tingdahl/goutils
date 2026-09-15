@@ -4,11 +4,13 @@ package gcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"time"
 
+	"github.com/tingdahl/goutils/config"
 	"github.com/tingdahl/goutils/storage"
 
 	gcs "cloud.google.com/go/storage"
@@ -19,28 +21,39 @@ import (
 // GoogleStorageClient implements storage.StorageClient using Google Cloud Storage SDK.
 type GoogleStorageClient struct {
 	client *gcs.Client
+	bucket string
 }
 
 // Init configures the storage package constructor to instantiate a GoogleStorageClient.
 func Init() error {
-	storage.SetStorageConstructor(func() (storage.StorageClient, error) {
-		return NewGoogleStorageClient(context.Background())
-	})
+	storage.SetStorageConstructor(NewGoogleStorageClient)
 	return nil
 }
 
 // NewGoogleStorageClient creates a new GCS client.
-func NewGoogleStorageClient(ctx context.Context) (storage.StorageClient, error) {
+func NewGoogleStorageClient(opts map[string]string) (storage.StorageClient, error) {
+	bucket := ""
+	if opts != nil {
+		bucket = opts["GCS_BUCKET"]
+	}
+	if bucket == "" {
+		bucket = config.GetConfigString("GCS_BUCKET")
+	}
+	if bucket == "" {
+		return nil, errors.New("gcs: GCS_BUCKET is required but not set")
+	}
+
+	ctx := context.Background()
 	client, err := gcs.NewClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
-	return &GoogleStorageClient{client: client}, nil
+	return &GoogleStorageClient{client: client, bucket: bucket}, nil
 }
 
 // GetCurrentRevision retrieves the object generation from GCS.
-func (g *GoogleStorageClient) GetCurrentRevision(ctx context.Context, bucket string, object string) (string, error) {
-	objectHandle := g.client.Bucket(bucket).Object(object)
+func (g *GoogleStorageClient) GetCurrentRevision(ctx context.Context, object string) (string, error) {
+	objectHandle := g.client.Bucket(g.bucket).Object(object)
 	attrs, err := objectHandle.Attrs(ctx)
 	if err != nil {
 		return "", err
@@ -62,8 +75,8 @@ func prepareGCSWriter(writer *gcs.Writer, file string, data []byte) ([]byte, err
 }
 
 // WriteObject writes data to GCS, compressing with Brotli if key ends with .br.
-func (g *GoogleStorageClient) WriteObject(ctx context.Context, bucket string, file string, data []byte) (string, error) {
-	object := g.client.Bucket(bucket).Object(file)
+func (g *GoogleStorageClient) WriteObject(ctx context.Context, file string, data []byte) (string, error) {
+	object := g.client.Bucket(g.bucket).Object(file)
 	writer := object.NewWriter(ctx)
 	payload, err := prepareGCSWriter(writer, file, data)
 	if err != nil {
@@ -79,8 +92,8 @@ func (g *GoogleStorageClient) WriteObject(ctx context.Context, bucket string, fi
 }
 
 // WriteRawObject writes raw data directly to GCS without compression.
-func (g *GoogleStorageClient) WriteRawObject(ctx context.Context, bucket string, file string, data []byte) (string, error) {
-	object := g.client.Bucket(bucket).Object(file)
+func (g *GoogleStorageClient) WriteRawObject(ctx context.Context, file string, data []byte) (string, error) {
+	object := g.client.Bucket(g.bucket).Object(file)
 	writer := object.NewWriter(ctx)
 	writer.ContentType = storage.ContentTypeFromKey(file)
 	if storage.IsBrotliKey(file) {
@@ -96,8 +109,8 @@ func (g *GoogleStorageClient) WriteRawObject(ctx context.Context, bucket string,
 }
 
 // WriteObjectIfRevisionMatch writes data to GCS conditionally based on generation match.
-func (g *GoogleStorageClient) WriteObjectIfRevisionMatch(ctx context.Context, bucket string, file string, data []byte, revision string) (string, error) {
-	object := g.client.Bucket(bucket).Object(file)
+func (g *GoogleStorageClient) WriteObjectIfRevisionMatch(ctx context.Context, file string, data []byte, revision string) (string, error) {
+	object := g.client.Bucket(g.bucket).Object(file)
 	var cond gcs.Conditions
 	var gen int64
 	var err error
@@ -132,8 +145,8 @@ func (g *GoogleStorageClient) WriteObjectIfRevisionMatch(ctx context.Context, bu
 }
 
 // ReadRawObject reads object data without decompression.
-func (g *GoogleStorageClient) ReadRawObject(ctx context.Context, bucket string, file string) ([]byte, string, error) {
-	object := g.client.Bucket(bucket).Object(file)
+func (g *GoogleStorageClient) ReadRawObject(ctx context.Context, file string) ([]byte, string, error) {
+	object := g.client.Bucket(g.bucket).Object(file)
 	reader, err := object.NewReader(ctx)
 	if err != nil {
 		return nil, "", err
@@ -148,8 +161,8 @@ func (g *GoogleStorageClient) ReadRawObject(ctx context.Context, bucket string, 
 }
 
 // ReadObject reads object data, automatically decompressing Brotli if key ends with .br.
-func (g *GoogleStorageClient) ReadObject(ctx context.Context, bucket string, file string) ([]byte, string, error) {
-	data, gen, err := g.ReadRawObject(ctx, bucket, file)
+func (g *GoogleStorageClient) ReadObject(ctx context.Context, file string) ([]byte, string, error) {
+	data, gen, err := g.ReadRawObject(ctx, file)
 	if err != nil {
 		return nil, "", err
 	}
@@ -166,8 +179,8 @@ func (g *GoogleStorageClient) ReadObject(ctx context.Context, bucket string, fil
 }
 
 // GetObjectLink generates a signed GET URL.
-func (g *GoogleStorageClient) GetObjectLink(ctx context.Context, bucket string, object string, duration int, IPAddress string) (string, error) {
-	bucketHandle := g.client.Bucket(bucket)
+func (g *GoogleStorageClient) GetObjectLink(ctx context.Context, object string, duration int, IPAddress string) (string, error) {
+	bucketHandle := g.client.Bucket(g.bucket)
 	opts := &gcs.SignedURLOptions{
 		Scheme:  gcs.SigningSchemeV4,
 		Method:  "GET",
@@ -178,8 +191,8 @@ func (g *GoogleStorageClient) GetObjectLink(ctx context.Context, bucket string, 
 }
 
 // GetUploadLink generates a signed PUT URL.
-func (g *GoogleStorageClient) GetUploadLink(ctx context.Context, bucket string, object string, duration int, contentType string) (string, error) {
-	bucketHandle := g.client.Bucket(bucket)
+func (g *GoogleStorageClient) GetUploadLink(ctx context.Context, object string, duration int, contentType string) (string, error) {
+	bucketHandle := g.client.Bucket(g.bucket)
 	opts := &gcs.SignedURLOptions{
 		Scheme:      gcs.SigningSchemeV4,
 		Method:      "PUT",
@@ -191,15 +204,15 @@ func (g *GoogleStorageClient) GetUploadLink(ctx context.Context, bucket string, 
 }
 
 // DeleteObject deletes an object from GCS.
-func (g *GoogleStorageClient) DeleteObject(ctx context.Context, bucket string, object string) error {
-	objectHandle := g.client.Bucket(bucket).Object(object)
+func (g *GoogleStorageClient) DeleteObject(ctx context.Context, object string) error {
+	objectHandle := g.client.Bucket(g.bucket).Object(object)
 	return objectHandle.Delete(ctx)
 }
 
 // ListPrefixes lists directory-like common prefixes for a delimiter.
-func (g *GoogleStorageClient) ListPrefixes(ctx context.Context, bucket string, prefix string, delimiter string) ([]string, error) {
+func (g *GoogleStorageClient) ListPrefixes(ctx context.Context, prefix string, delimiter string) ([]string, error) {
 	var prefixes []string
-	it := g.client.Bucket(bucket).Objects(ctx, &gcs.Query{
+	it := g.client.Bucket(g.bucket).Objects(ctx, &gcs.Query{
 		Prefix:    prefix,
 		Delimiter: delimiter,
 	})
@@ -219,9 +232,9 @@ func (g *GoogleStorageClient) ListPrefixes(ctx context.Context, bucket string, p
 }
 
 // ListObjects lists objects matching a prefix.
-func (g *GoogleStorageClient) ListObjects(ctx context.Context, bucket string, prefix string) ([]storage.StorageObject, error) {
+func (g *GoogleStorageClient) ListObjects(ctx context.Context, prefix string) ([]storage.StorageObject, error) {
 	var objects []storage.StorageObject
-	it := g.client.Bucket(bucket).Objects(ctx, &gcs.Query{
+	it := g.client.Bucket(g.bucket).Objects(ctx, &gcs.Query{
 		Prefix: prefix,
 	})
 	for {

@@ -12,7 +12,7 @@ func setupTest(t *testing.T) {
 	t.Helper()
 	ResetForTesting()
 	ms := storage.NewMockStorageClient()
-	if err := Init(ms, "test-bucket"); err != nil {
+	if err := Init(ms); err != nil {
 		t.Fatalf("failed to init files repository: %v", err)
 	}
 }

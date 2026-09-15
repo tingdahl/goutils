@@ -15,16 +15,21 @@ import (
 )
 
 func TestS3Init(t *testing.T) {
-	err := Init("eu-west-1", "https://s3.example.com")
+	err := Init()
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// S3 constructor was registered
-	client, err := storage.NewStorageClient()
-	// NewStorageClient should call NewS3StorageClient which loads config without error (may succeed even without AWS creds)
-	if err == nil && client == nil {
-		t.Fatal("expected non-nil client when err is nil")
+	// S3 constructor was registered. Calling with S3_BUCKET passed in map
+	client, err := storage.NewStorageClient(map[string]string{
+		EnvS3Bucket: "test-bucket",
+		EnvS3Region: "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("NewStorageClient failed: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
 	}
 }
 
@@ -42,7 +47,11 @@ func TestS3StorageLifecycle(t *testing.T) {
 	endpoint := os.Getenv(EnvS3Endpoint)
 
 	ctx := context.Background()
-	client, err := NewS3StorageClient(ctx, region, endpoint)
+	client, err := NewS3StorageClient(map[string]string{
+		EnvS3Bucket:   bucketName,
+		EnvS3Region:   region,
+		EnvS3Endpoint: endpoint,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create S3 storage client: %v", err)
 	}
@@ -52,7 +61,7 @@ func TestS3StorageLifecycle(t *testing.T) {
 	data2 := []byte("hello updated test")
 
 	// 1. WriteObject
-	revision1, err := client.WriteObject(ctx, bucketName, objectName, data1)
+	revision1, err := client.WriteObject(ctx, objectName, data1)
 	if err != nil {
 		t.Fatalf("WriteObject failed: %v", err)
 	}
@@ -61,7 +70,7 @@ func TestS3StorageLifecycle(t *testing.T) {
 	}
 
 	// 2. ReadObject
-	readData, readRevision, err := client.ReadObject(ctx, bucketName, objectName)
+	readData, readRevision, err := client.ReadObject(ctx, objectName)
 	if err != nil {
 		t.Fatalf("ReadObject failed: %v", err)
 	}
@@ -73,7 +82,7 @@ func TestS3StorageLifecycle(t *testing.T) {
 	}
 
 	// 3. GetCurrentRevision
-	currentRev, err := client.GetCurrentRevision(ctx, bucketName, objectName)
+	currentRev, err := client.GetCurrentRevision(ctx, objectName)
 	if err != nil {
 		t.Fatalf("GetCurrentRevision failed: %v", err)
 	}
@@ -83,7 +92,7 @@ func TestS3StorageLifecycle(t *testing.T) {
 
 	// 4. WriteObjectIfRevisionMatch (Failure Case)
 	badRevision := revision1 + "_bad"
-	_, err = client.WriteObjectIfRevisionMatch(ctx, bucketName, objectName, data2, badRevision)
+	_, err = client.WriteObjectIfRevisionMatch(ctx, objectName, data2, badRevision)
 	if err == nil {
 		t.Fatal("WriteObjectIfRevisionMatch should have failed with bad revision, but it succeeded")
 	}
@@ -92,7 +101,7 @@ func TestS3StorageLifecycle(t *testing.T) {
 	}
 
 	// 5. WriteObjectIfRevisionMatch (Success Case)
-	revision2, err := client.WriteObjectIfRevisionMatch(ctx, bucketName, objectName, data2, revision1)
+	revision2, err := client.WriteObjectIfRevisionMatch(ctx, objectName, data2, revision1)
 	if err != nil {
 		t.Fatalf("WriteObjectIfRevisionMatch failed when expected to succeed: %v", err)
 	}
@@ -101,7 +110,7 @@ func TestS3StorageLifecycle(t *testing.T) {
 	}
 
 	// 6. GetObjectLink (Signed URL)
-	url, err := client.GetObjectLink(ctx, bucketName, objectName, 3600, "")
+	url, err := client.GetObjectLink(ctx, objectName, 3600, "")
 	if err != nil {
 		t.Fatalf("GetObjectLink failed: %v", err)
 	}
@@ -111,6 +120,6 @@ func TestS3StorageLifecycle(t *testing.T) {
 
 	// Clean up
 	defer func() {
-		_ = client.DeleteObject(ctx, bucketName, objectName)
+		_ = client.DeleteObject(ctx, objectName)
 	}()
 }

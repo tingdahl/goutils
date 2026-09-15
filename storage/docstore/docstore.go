@@ -70,7 +70,6 @@ func (d *Document) UpdateFromStorage() error {
 func (d *Document) CheckAndReload(ctx context.Context) (bool, error) {
 	d.Rwlock.RLock()
 	storageClient := d.Storage
-	bucket := d.BucketName
 	object := d.ObjectName
 	localRev := d.Revision
 	d.Rwlock.RUnlock()
@@ -79,9 +78,9 @@ func (d *Document) CheckAndReload(ctx context.Context) (bool, error) {
 		return false, errors.New("storage client cannot be nil")
 	}
 
-	remoteRev, err := storageClient.GetCurrentRevision(ctx, bucket, object)
+	remoteRev, err := storageClient.GetCurrentRevision(ctx, object)
 	if err != nil {
-		return false, fmt.Errorf("failed to get current revision for %s/%s: %w", bucket, object, err)
+		return false, fmt.Errorf("failed to get current revision for %s: %w", object, err)
 	}
 
 	if remoteRev == localRev {
@@ -101,7 +100,7 @@ func (d *Document) CheckAndReload(ctx context.Context) (bool, error) {
 	}
 
 	if err := d.DoLoad(); err != nil {
-		return false, fmt.Errorf("failed to reload document %s/%s: %w", bucket, object, err)
+		return false, fmt.Errorf("failed to reload document %s: %w", object, err)
 	}
 
 	return true, nil
@@ -126,7 +125,7 @@ func isNotFoundError(err error) bool {
 
 // DoLoad fetches the document from storage, handling missing documents as empty initial state.
 func (d *Document) DoLoad() error {
-	data, revision, err := d.Storage.ReadObject(context.Background(), d.BucketName, d.ObjectName)
+	data, revision, err := d.Storage.ReadObject(context.Background(), d.ObjectName)
 	if err != nil {
 		if isNotFoundError(err) {
 			if d.ProtoMsg != nil {
@@ -195,7 +194,7 @@ func (d *Document) Update(ctx context.Context, updateFn DocumentUpdateFunc) erro
 			}
 		}
 
-		newRev, err := d.Storage.WriteObjectIfRevisionMatch(ctx, d.BucketName, d.ObjectName, newProtobuf, d.Revision)
+		newRev, err := d.Storage.WriteObjectIfRevisionMatch(ctx, d.ObjectName, newProtobuf, d.Revision)
 		if err != nil {
 			if errors.Is(err, storage.RevisionWriteError) || err == storage.RevisionWriteError {
 				continue

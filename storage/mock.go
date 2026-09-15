@@ -25,7 +25,7 @@ func NewMockStorageClient() *MockStorageClient {
 }
 
 // GetCurrentRevision returns the current revision of the object.
-func (m *MockStorageClient) GetCurrentRevision(ctx context.Context, bucket, object string) (string, error) {
+func (m *MockStorageClient) GetCurrentRevision(ctx context.Context, object string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	rev, ok := m.revisions[object]
@@ -36,7 +36,7 @@ func (m *MockStorageClient) GetCurrentRevision(ctx context.Context, bucket, obje
 }
 
 // WriteObject writes data and increments the revision.
-func (m *MockStorageClient) WriteObject(ctx context.Context, bucket, object string, data []byte) (string, error) {
+func (m *MockStorageClient) WriteObject(ctx context.Context, object string, data []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.revisions[object]++
@@ -45,12 +45,12 @@ func (m *MockStorageClient) WriteObject(ctx context.Context, bucket, object stri
 }
 
 // WriteRawObject writes raw uncompressed data.
-func (m *MockStorageClient) WriteRawObject(ctx context.Context, bucket, object string, data []byte) (string, error) {
-	return m.WriteObject(ctx, bucket, object, data)
+func (m *MockStorageClient) WriteRawObject(ctx context.Context, object string, data []byte) (string, error) {
+	return m.WriteObject(ctx, object, data)
 }
 
 // WriteObjectIfRevisionMatch conditionally writes data if the revision matches.
-func (m *MockStorageClient) WriteObjectIfRevisionMatch(ctx context.Context, bucket, object string, data []byte, revision string) (string, error) {
+func (m *MockStorageClient) WriteObjectIfRevisionMatch(ctx context.Context, object string, data []byte, revision string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -70,7 +70,7 @@ func (m *MockStorageClient) WriteObjectIfRevisionMatch(ctx context.Context, buck
 }
 
 // ReadObject reads and returns stored data for the object.
-func (m *MockStorageClient) ReadObject(ctx context.Context, bucket, object string) ([]byte, string, error) {
+func (m *MockStorageClient) ReadObject(ctx context.Context, object string) ([]byte, string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -82,22 +82,22 @@ func (m *MockStorageClient) ReadObject(ctx context.Context, bucket, object strin
 }
 
 // ReadRawObject reads raw bytes without decompression.
-func (m *MockStorageClient) ReadRawObject(ctx context.Context, bucket, object string) ([]byte, string, error) {
-	return m.ReadObject(ctx, bucket, object)
+func (m *MockStorageClient) ReadRawObject(ctx context.Context, object string) ([]byte, string, error) {
+	return m.ReadObject(ctx, object)
 }
 
 // GetObjectLink returns a signed URL.
-func (m *MockStorageClient) GetObjectLink(ctx context.Context, bucket, object string, duration int, ip string) (string, error) {
-	return fmt.Sprintf("https://mock-s3/%s/%s", bucket, object), nil
+func (m *MockStorageClient) GetObjectLink(ctx context.Context, object string, duration int, ip string) (string, error) {
+	return fmt.Sprintf("https://mock-storage/%s", object), nil
 }
 
 // GetUploadLink returns a mock upload URL.
-func (m *MockStorageClient) GetUploadLink(ctx context.Context, bucket, object string, duration int, contentType string) (string, error) {
-	return fmt.Sprintf("https://mock-s3/upload/%s/%s", bucket, object), nil
+func (m *MockStorageClient) GetUploadLink(ctx context.Context, object string, duration int, contentType string) (string, error) {
+	return fmt.Sprintf("https://mock-storage/upload/%s", object), nil
 }
 
 // DeleteObject removes the object from in-memory storage.
-func (m *MockStorageClient) DeleteObject(ctx context.Context, bucket, object string) error {
+func (m *MockStorageClient) DeleteObject(ctx context.Context, object string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.objects, object)
@@ -106,12 +106,12 @@ func (m *MockStorageClient) DeleteObject(ctx context.Context, bucket, object str
 }
 
 // ListPrefixes returns prefixes.
-func (m *MockStorageClient) ListPrefixes(ctx context.Context, bucket, prefix, delimiter string) ([]string, error) {
+func (m *MockStorageClient) ListPrefixes(ctx context.Context, prefix, delimiter string) ([]string, error) {
 	return nil, nil
 }
 
 // ListObjects returns objects matching prefix.
-func (m *MockStorageClient) ListObjects(ctx context.Context, bucket, prefix string) ([]StorageObject, error) {
+func (m *MockStorageClient) ListObjects(ctx context.Context, prefix string) ([]StorageObject, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var result []StorageObject

@@ -16,19 +16,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Init initializes the billing repository for the given storage client and bucket.
-func Init(store storage.StorageClient, bucket string, prefix string) error {
+// Init initializes the billing repository for the given storage client and prefix.
+func Init(store storage.StorageClient, prefix string) error {
 	if store == nil {
 		return errors.New("storage client cannot be nil")
-	}
-	if bucket == "" {
-		return errors.New("bucket name cannot be empty")
 	}
 
 	billingInitOnce.Do(func() {
 		billingPrefix = prefix
 		billingStore = store
-		billingBucket = bucket
 		billingRepo = docstore.NewRepository(billingClientFactory)
 	})
 	return nil
@@ -134,7 +130,7 @@ func (s *BillingClient) AddReceipt(ctx context.Context, req *AddReceiptRequestPr
 	if len(req.PdfContent) > 0 {
 		tenantID := s.TenantID()
 		objectKey := fmt.Sprintf("%s/%d/%s.pdf", ReceiptsPrefix, tenantID, receipt.Id)
-		_, err := s.Storage.WriteRawObject(ctx, s.BucketName, objectKey, req.PdfContent)
+		_, err := s.Storage.WriteRawObject(ctx, objectKey, req.PdfContent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write receipt PDF to storage: %w", err)
 		}
@@ -168,7 +164,7 @@ func (s *BillingClient) GetReceiptPDF(ctx context.Context, receiptID string) ([]
 		return nil, nil, errors.New("no PDF file attached to this receipt")
 	}
 
-	content, _, err := s.Storage.ReadRawObject(ctx, s.BucketName, receipt.ReceiptObjectKey)
+	content, _, err := s.Storage.ReadRawObject(ctx, receipt.ReceiptObjectKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read receipt file content: %w", err)
 	}
@@ -187,7 +183,7 @@ func (s *BillingClient) GetReceiptDownloadLink(ctx context.Context, receiptID st
 		return "", nil, errors.New("no PDF file attached to this receipt")
 	}
 
-	url, err := s.Storage.GetObjectLink(ctx, s.BucketName, receipt.ReceiptObjectKey, validitySeconds, "")
+	url, err := s.Storage.GetObjectLink(ctx, receipt.ReceiptObjectKey, validitySeconds, "")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to generate signed download link: %w", err)
 	}
@@ -213,16 +209,12 @@ var (
 	billingInitOnce sync.Once
 	billingRepo     *docstore.Repository[*BillingClient]
 	billingStore    storage.StorageClient
-	billingBucket   string
 	billingPrefix   string
 )
 
 func billingClientFactory(ctx context.Context, objectPath string) (*BillingClient, error) {
 	if billingStore == nil {
 		return nil, errors.New("storage client cannot be nil")
-	}
-	if billingBucket == "" {
-		return nil, errors.New("bucket name cannot be empty")
 	}
 	if objectPath == "" {
 		return nil, fmt.Errorf("object path cannot be empty")
@@ -232,7 +224,6 @@ func billingClientFactory(ctx context.Context, objectPath string) (*BillingClien
 	client.Document = docstore.Document{
 		Client:               client,
 		Storage:              billingStore,
-		BucketName:           billingBucket,
 		ObjectName:           objectPath,
 		ProtoMsg:             &client.data,
 		SupportedSchemaMinor: SchemaMinor,
