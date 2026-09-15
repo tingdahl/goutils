@@ -499,3 +499,23 @@ func TestEntitlement_TenantIDMismatch(t *testing.T) {
 	}
 }
 
+
+func TestEntitlement_GetSignedURL(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	const tenantID int64 = 7777
+	client, err := entitlement.GetEntitlementClient(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("failed to get entitlement client: %v", err)
+	}
+
+	url, err := client.GetSignedURL(ctx, 300)
+	if err != nil {
+		t.Fatalf("GetSignedURL failed: %v", err)
+	}
+	expectedURL := "https://mock-storage/entitlements/7777/entitlement.v1.pb.br"
+	if url != expectedURL {
+		t.Errorf("expected signed URL %s, got %s", expectedURL, url)
+	}
+}

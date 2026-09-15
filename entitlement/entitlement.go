@@ -68,6 +68,18 @@ func (c *EntitlementClient) TenantID() int64 {
 	return c.tenantID
 }
 
+// GetSignedURL generates a presigned download URL for the tenant's entitlement document valid for durationSeconds.
+// If durationSeconds <= 0, a default of 60 seconds is used.
+func (c *EntitlementClient) GetSignedURL(ctx context.Context, durationSeconds int) (string, error) {
+	if durationSeconds <= 0 {
+		durationSeconds = 60
+	}
+	if entitlementStore == nil {
+		return "", errors.New("storage client cannot be nil")
+	}
+	return entitlementStore.GetObjectLink(ctx, c.ObjectName, durationSeconds, "")
+}
+
 func (c *EntitlementClient) Dimensions() map[int32]*EntitlementDimensionProto {
 	c.Rwlock.RLock()
 	defer c.Rwlock.RUnlock()
