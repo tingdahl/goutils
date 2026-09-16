@@ -194,18 +194,6 @@ func (t *EntitlementTransactionProto) validate() error {
 	return nil
 }
 
-func pruneExpiredTransactions(transactions []*EntitlementTransactionProto) []*EntitlementTransactionProto {
-	now := time.Now().UnixMilli()
-	var keep = []*EntitlementTransactionProto{}
-	for _, tx := range transactions {
-		if tx.TransactionType == EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE && tx.ExpiresAtUnixMs <= now {
-			continue
-		}
-		keep = append(keep, tx)
-	}
-
-	return keep
-}
 
 
 func (c *EntitlementClient) AddTransaction(ctx context.Context, transaction *EntitlementTransactionProto) error {
@@ -224,7 +212,7 @@ func (c *EntitlementClient) AddTransaction(ctx context.Context, transaction *Ent
 
 		// Allocate sequential id starting from 1 if not pre-set
 		if transaction.TransactionId <= 0 {
-			var maxId int32 = 0
+			var maxId int64 = 0
 			for _, item := range msg.Transactions {
 				if item.TransactionId > maxId {
 					maxId = item.TransactionId
@@ -233,7 +221,7 @@ func (c *EntitlementClient) AddTransaction(ctx context.Context, transaction *Ent
 			transaction.TransactionId = maxId + 1
 		}
 
-		msg.Transactions = pruneExpiredTransactions(append(msg.Transactions, transaction))
+		msg.Transactions = append(msg.Transactions, transaction)
 		sort.SliceStable(msg.Transactions, func(i, j int) bool {
 			return msg.Transactions[i].EffectiveAtUnixMs < msg.Transactions[j].EffectiveAtUnixMs
 		})
@@ -241,12 +229,12 @@ func (c *EntitlementClient) AddTransaction(ctx context.Context, transaction *Ent
 	})
 }
 
-func (c *EntitlementClient) RemoveTransaction(ctx context.Context, transactionID int32) error {
+func (c *EntitlementClient) RemoveTransaction(ctx context.Context, transactionID int64) error {
 	return c.Update(ctx, func(m proto.Message) error {
 		msg := m.(*EntitlementProto)
 		for i, item := range msg.Transactions {
 			if item.TransactionId == transactionID {
-				msg.Transactions = pruneExpiredTransactions(append(msg.Transactions[:i], msg.Transactions[i+1:]...))
+				msg.Transactions = append(msg.Transactions[:i], msg.Transactions[i+1:]...)
 				return nil
 			}
 		}

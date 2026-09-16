@@ -15,7 +15,7 @@ message EntitlementDimensionProto {
 }
 
 message EntitlementTransactionProto {
-    int32 transaction_id = 1;
+    int64 transaction_id = 1;
     EntitlementTransactionType transaction_type = 2;
     map<int32, int64> dimension_values = 3;
     string description = 4;

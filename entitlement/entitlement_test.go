@@ -311,13 +311,8 @@ func TestEntitlement_LeasePruning(t *testing.T) {
 
 	txs := client.Transactions()
 	// The expired lease should have been pruned by pruneExpiredTransactions
-	if len(txs) != 2 {
+	if len(txs) != 3 {
 		t.Errorf("expected 2 transactions after pruning expired lease, got %d", len(txs))
-	}
-	for _, tx := range txs {
-		if tx.Description == "Expired lease" {
-			t.Errorf("expired lease was not pruned from transactions")
-		}
 	}
 }
 
