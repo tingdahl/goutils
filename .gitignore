@@ -31,7 +31,6 @@ sa-key.json
 Thumbs.db
 
 # Generated stuff
-*/*.pb.go
 
 .agents
 AGENTS.md
