@@ -131,12 +131,8 @@ func (c *EntitlementClient) GetCurrentEntitlementValues() map[int32]int64 {
 		values[dimId] = 0
 	}
 
-	now := time.Now().UnixMilli()
 	// Transactions are sorted by effective_at_unix_ms when they are written so we can just iterate
 	for _, tx := range c.data.Transactions {
-		if tx.TransactionType == EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE && tx.ExpiresAtUnixMs <= now {
-			continue
-		}
 
 		for dimId, val := range tx.DimensionValues {
 			if _, ok := c.data.Dimensions[dimId]; !ok {
