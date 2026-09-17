@@ -52,9 +52,11 @@ func (h *ContextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 // Handle adds context attributes (trace_id, session_id, user_id, email, client_ip, user_agent)
 // to the log record before delegating to Next.
 func (h *ContextHandler) Handle(ctx context.Context, r slog.Record) error {
-	if traceID, ok := ctx.Value(traceContextKey).(string); ok && traceID != "" {
-		r.AddAttrs(slog.String(LogKeyTraceID, traceID))
+	traceID, _ := ctx.Value(traceContextKey).(string)
+	if traceID == "" {
+		traceID = uuid.New().String()
 	}
+	r.AddAttrs(slog.String(LogKeyTraceID, traceID))
 	if sessionID, ok := ctx.Value(sessionContextKey).(string); ok && sessionID != "" {
 		r.AddAttrs(slog.String(LogKeySessionID, sessionID))
 	}
@@ -117,11 +119,12 @@ func TraceMiddleware(next http.Handler) http.Handler {
 
 // GetTraceIDFromRequest extracts Trace-ID from headers, falling back to GCP standard.
 func GetTraceIDFromRequest(r *http.Request) string {
-	id := r.Header.Get(HeaderTraceID)
-	if id == "" {
-		id = r.Header.Get(HeaderGCPTrace)
+	for _, h := range []string{HeaderTraceID, "X-Trace-ID", "X-Trace-Id", "X-Request-ID", "X-Request-Id", HeaderGCPTrace} {
+		if id := r.Header.Get(h); id != "" {
+			return id
+		}
 	}
-	return id
+	return ""
 }
 
 // SetTraceIDInResponse sets the Trace-ID header in the response.
@@ -180,6 +183,11 @@ func GetClientIPFromContext(ctx context.Context) string {
 func GetUserAgentFromContext(ctx context.Context) string {
 	val, _ := ctx.Value(userAgentContextKey).(string)
 	return val
+}
+
+// WithTraceID injects trace ID into context.
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceContextKey, traceID)
 }
 
 // WithClientIP injects client IP into context.

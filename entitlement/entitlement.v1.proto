@@ -24,6 +24,7 @@ message EntitlementTransactionProto {
     int64 expires_at_unix_ms = 7;
     string invoice_number = 8;
     int64 billing_transaction_id = 9;
+    map<string, string> labels = 10;
 }
 
 message EntitlementProto {
