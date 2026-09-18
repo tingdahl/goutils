@@ -18,14 +18,19 @@ const (
 	ContentTypeApplicationOctetStream = "application/octet-stream"
 )
 
-// IsBrotliKey returns true if the object key indicates a Brotli-compressed file (.br extension).
+// IsZstdKey returns true if the object key indicates a Zstandard-compressed file (.zst extension).
+func IsZstdKey(object string) bool {
+	return strings.HasSuffix(object, ".zst")
+}
+
+// IsBrotliKey is maintained for backward compatibility.
 func IsBrotliKey(object string) bool {
 	return strings.HasSuffix(object, ".br")
 }
 
-// ContentTypeFromKey infers the MIME content type from an object key, stripping any .br extension if present.
+// ContentTypeFromKey infers the MIME content type from an object key, stripping any .zst or .br extension if present.
 func ContentTypeFromKey(object string) string {
-	name := strings.TrimSuffix(object, ".br")
+	name := strings.TrimSuffix(strings.TrimSuffix(object, ".zst"), ".br")
 	switch {
 	case strings.HasSuffix(name, ".pb"):
 		return ContentTypeApplicationProtobuf

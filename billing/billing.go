@@ -193,7 +193,7 @@ func (s *BillingClient) GetReceiptDownloadLink(ctx context.Context, receiptID st
 
 // Exported constants and errors.
 const (
-	DbObjectName   string = "billing.v1.pb.br"
+	DbObjectName   string = "billing.v1.pb.zst"
 	ReceiptsPrefix string = "billing/receipts"
 	SchemaMinor    int32  = 0
 )

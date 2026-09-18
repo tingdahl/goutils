@@ -63,8 +63,8 @@ func (g *GoogleStorageClient) GetCurrentRevision(ctx context.Context, object str
 
 func prepareGCSWriter(writer *gcs.Writer, file string, data []byte) ([]byte, error) {
 	writer.ObjectAttrs.ContentType = storage.ContentTypeFromKey(file)
-	if storage.IsBrotliKey(file) {
-		compressed, err := storage.CompressBrotli(data)
+	if storage.IsZstdKey(file) {
+		compressed, err := storage.CompressZstd(data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compress brotli payload for %s: %w", file, err)
 		}
@@ -96,7 +96,7 @@ func (g *GoogleStorageClient) WriteRawObject(ctx context.Context, file string, d
 	object := g.client.Bucket(g.bucket).Object(file)
 	writer := object.NewWriter(ctx)
 	writer.ContentType = storage.ContentTypeFromKey(file)
-	if storage.IsBrotliKey(file) {
+	if storage.IsZstdKey(file) {
 		writer.ContentEncoding = "br"
 	}
 	if _, err := writer.Write(data); err != nil {
@@ -167,8 +167,8 @@ func (g *GoogleStorageClient) ReadObject(ctx context.Context, file string) ([]by
 		return nil, "", err
 	}
 
-	if storage.IsBrotliKey(file) {
-		decompressed, err := storage.DecompressBrotli(data)
+	if storage.IsZstdKey(file) {
+		decompressed, err := storage.DecompressZstd(data)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to decompress brotli payload for %s: %w", file, err)
 		}

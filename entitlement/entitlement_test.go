@@ -431,8 +431,8 @@ func TestEntitlement_Persistence(t *testing.T) {
 		t.Fatalf("AddTransaction failed: %v", err)
 	}
 
-	// Verify object exists at expected path in storage: <prefix>/<tenantID>/entitlement.v1.pb.br
-	expectedKey := "entitlements/6001/entitlement.v1.pb.br"
+	// Verify object exists at expected path in storage: <prefix>/<tenantID>/entitlement.v1.pb.zst
+	expectedKey := "entitlements/6001/entitlement.v1.pb.zst"
 	data, _, err := testStore.ReadObject(ctx, expectedKey)
 	if err != nil {
 		t.Fatalf("expected storage object %s to exist: %v", expectedKey, err)
@@ -482,7 +482,7 @@ func TestEntitlement_TenantIDMismatch(t *testing.T) {
 		t.Fatalf("failed to marshal proto: %v", err)
 	}
 
-	path := "entitlements/8888/entitlement.v1.pb.br"
+	path := "entitlements/8888/entitlement.v1.pb.zst"
 	if _, err := testStore.WriteObject(ctx, path, data); err != nil {
 		t.Fatalf("failed to write mismatched object to storage: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestEntitlement_GetSignedURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSignedURL failed: %v", err)
 	}
-	expectedURL := "https://mock-storage/entitlements/7777/entitlement.v1.pb.br"
+	expectedURL := "https://mock-storage/entitlements/7777/entitlement.v1.pb.zst"
 	if url != expectedURL {
 		t.Errorf("expected signed URL %s, got %s", expectedURL, url)
 	}

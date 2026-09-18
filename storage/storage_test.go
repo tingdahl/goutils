@@ -57,14 +57,14 @@ func (m *mockStorageClient) ListObjects(ctx context.Context, prefix string) ([]S
 }
 
 func TestStorageHelpers(t *testing.T) {
-	if !IsBrotliKey("accounting.pb.br") {
-		t.Errorf("Expected accounting.pb.br to be recognized as Brotli key")
+	if !IsZstdKey("accounting.pb.zst") {
+		t.Errorf("Expected accounting.pb.zst to be recognized as Zstd key")
 	}
-	if !IsBrotliKey("path/to/data.json.br") {
-		t.Errorf("Expected path/to/data.json.br to be recognized as Brotli key")
+	if !IsZstdKey("path/to/data.json.zst") {
+		t.Errorf("Expected path/to/data.json.zst to be recognized as Zstd key")
 	}
-	if IsBrotliKey("accounting.pb") {
-		t.Errorf("Did not expect accounting.pb to be recognized as Brotli key")
+	if IsZstdKey("accounting.pb") {
+		t.Errorf("Did not expect accounting.pb to be recognized as Zstd key")
 	}
 
 	tests := []struct {
@@ -72,11 +72,12 @@ func TestStorageHelpers(t *testing.T) {
 		expected string
 	}{
 		{"accounting.pb", ContentTypeApplicationProtobuf},
+		{"accounting.pb.zst", ContentTypeApplicationProtobuf},
 		{"accounting.pb.br", ContentTypeApplicationProtobuf},
 		{"config.json", ContentTypeApplicationJSON},
-		{"config.json.br", ContentTypeApplicationJSON},
+		{"config.json.zst", ContentTypeApplicationJSON},
 		{"receipt.pdf", "application/pdf"},
-		{"receipt.pdf.br", "application/pdf"},
+		{"receipt.pdf.zst", "application/pdf"},
 		{"photo.png", "image/png"},
 		{"photo.jpg", "image/jpeg"},
 		{"index.html", ContentTypeTextHTML},
@@ -98,7 +99,6 @@ func TestStorageHelpers(t *testing.T) {
 }
 
 func TestStorageConstructorAndHealth(t *testing.T) {
-	// Uninitialized constructor
 	SetStorageConstructor(nil)
 	_, err := NewStorageClient()
 	if err == nil {
@@ -108,7 +108,6 @@ func TestStorageConstructorAndHealth(t *testing.T) {
 		t.Error("expected CheckHealth error when constructor is nil")
 	}
 
-	// Register mock constructor
 	var capturedOpts map[string]string
 	mockClient := &mockStorageClient{objects: make(map[string][]byte)}
 	SetStorageConstructor(func(opts map[string]string) (StorageClient, error) {
@@ -116,7 +115,6 @@ func TestStorageConstructorAndHealth(t *testing.T) {
 		return mockClient, nil
 	})
 
-	// Test zero-args call
 	client, err := NewStorageClient()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -131,7 +129,6 @@ func TestStorageConstructorAndHealth(t *testing.T) {
 		t.Errorf("CheckHealth failed: %v", err)
 	}
 
-	// Test call with options map
 	client2, err := NewStorageClient(map[string]string{"S3_BUCKET": "custom-bucket"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

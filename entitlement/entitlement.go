@@ -248,7 +248,7 @@ func tenantEntitlementPath(tenantID int64) string {
 }
 
 const (
-	DbObjectName = "entitlement.v1.pb.br"
+	DbObjectName = "entitlement.v1.pb.zst"
 	SchemaMinor  int32 = 0
 )
 

@@ -33,9 +33,9 @@ var (
 func FilesCatalogObjectName(prefix string) string {
 	cleanPrefix := strings.Trim(prefix, "/")
 	if cleanPrefix == "" {
-		return "files.v1.pb.br"
+		return "files.v1.pb.zst"
 	}
-	return fmt.Sprintf("%s/files.v1.pb.br", cleanPrefix)
+	return fmt.Sprintf("%s/files.v1.pb.zst", cleanPrefix)
 }
 
 // FileRawObjectName returns the object key for a raw file's binary content.
@@ -114,7 +114,7 @@ func filesClientFactory(ctx context.Context, objectPath string) (*FilesClient, e
 	}
 
 	cleanPrefix := ""
-	if idx := strings.LastIndex(objectPath, "/files.v1.pb.br"); idx != -1 {
+	if idx := strings.LastIndex(objectPath, "/files.v1.pb.zst"); idx != -1 {
 		cleanPrefix = objectPath[:idx]
 	}
 

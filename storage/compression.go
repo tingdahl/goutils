@@ -1,23 +1,36 @@
 package storage
 
 import (
-	brrr "github.com/molecule-man/go-brrr"
+	"github.com/klauspost/compress/zstd"
 )
 
-const defaultBrotliQuality = 4
+var (
+	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	zstdDecoder, _ = zstd.NewReader(nil)
+)
 
-// CompressBrotli compresses the input data using Brotli with quality level 4 (optimal for on-the-fly writes).
-func CompressBrotli(data []byte) ([]byte, error) {
+// CompressZstd compresses the input data using Zstandard with fastest level.
+func CompressZstd(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	return brrr.Compress(data, defaultBrotliQuality)
+	return zstdEncoder.EncodeAll(data, make([]byte, 0, len(data))), nil
 }
 
-// DecompressBrotli decompresses the Brotli-compressed input data.
-func DecompressBrotli(data []byte) ([]byte, error) {
+// DecompressZstd decompresses the Zstandard-compressed input data.
+func DecompressZstd(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	return brrr.Decompress(data)
+	return zstdDecoder.DecodeAll(data, nil)
+}
+
+// CompressBrotli is an alias for CompressZstd for compatibility.
+func CompressBrotli(data []byte) ([]byte, error) {
+	return CompressZstd(data)
+}
+
+// DecompressBrotli is an alias for DecompressZstd for compatibility.
+func DecompressBrotli(data []byte) ([]byte, error) {
+	return DecompressZstd(data)
 }

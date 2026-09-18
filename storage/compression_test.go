@@ -5,17 +5,17 @@ import (
 	"testing"
 )
 
-func TestBrotliCompressionRoundTrip(t *testing.T) {
-	testData := []byte("Hello, world! This is a test string for Brotli compression and decompression in goutils.")
+func TestZstdCompressionRoundTrip(t *testing.T) {
+	testData := []byte("Hello, world! This is a test string for Zstandard compression and decompression in goutils.")
 
-	compressed, err := CompressBrotli(testData)
+	compressed, err := CompressZstd(testData)
 	if err != nil {
-		t.Fatalf("CompressBrotli failed: %v", err)
+		t.Fatalf("CompressZstd failed: %v", err)
 	}
 
-	decompressed, err := DecompressBrotli(compressed)
+	decompressed, err := DecompressZstd(compressed)
 	if err != nil {
-		t.Fatalf("DecompressBrotli failed: %v", err)
+		t.Fatalf("DecompressZstd failed: %v", err)
 	}
 
 	if !bytes.Equal(decompressed, testData) {
@@ -23,37 +23,36 @@ func TestBrotliCompressionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBrotliEmpty(t *testing.T) {
-	compressed, err := CompressBrotli(nil)
+func TestZstdEmpty(t *testing.T) {
+	compressed, err := CompressZstd(nil)
 	if err != nil {
-		t.Fatalf("CompressBrotli(nil) failed: %v", err)
+		t.Fatalf("CompressZstd(nil) failed: %v", err)
 	}
 	if len(compressed) != 0 {
 		t.Fatalf("Expected empty result, got %v", compressed)
 	}
 
-	decompressed, err := DecompressBrotli(nil)
+	decompressed, err := DecompressZstd(nil)
 	if err != nil {
-		t.Fatalf("DecompressBrotli(nil) failed: %v", err)
+		t.Fatalf("DecompressZstd(nil) failed: %v", err)
 	}
 	if len(decompressed) != 0 {
 		t.Fatalf("Expected empty result, got %v", decompressed)
 	}
 
-	// Also test empty non-nil slice
-	c2, err := CompressBrotli([]byte{})
+	c2, err := CompressZstd([]byte{})
 	if err != nil || len(c2) != 0 {
 		t.Fatalf("Expected empty result for []byte{}, got %v, err: %v", c2, err)
 	}
-	d2, err := DecompressBrotli([]byte{})
+	d2, err := DecompressZstd([]byte{})
 	if err != nil || len(d2) != 0 {
 		t.Fatalf("Expected empty result for []byte{}, got %v, err: %v", d2, err)
 	}
 }
 
-func TestBrotliCorrupted(t *testing.T) {
+func TestZstdCorrupted(t *testing.T) {
 	corrupted := []byte{0x01, 0x02, 0x03, 0x04}
-	_, err := DecompressBrotli(corrupted)
+	_, err := DecompressZstd(corrupted)
 	if err == nil {
 		t.Fatal("Expected error for corrupted data, got nil")
 	}
