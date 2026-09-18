@@ -261,3 +261,15 @@ func TestAuthMiddleware(t *testing.T) {
 		t.Errorf("Blocked user code = %d, want 403", recBlocked.Code)
 	}
 }
+
+func TestMicrosoftMultiTenantIssuerCheck(t *testing.T) {
+	if !isMicrosoftMultiTenantIssuer("https://login.microsoftonline.com/common/v2.0") {
+		t.Error("expected common to be recognized as Microsoft multi-tenant issuer")
+	}
+	if !isMicrosoftMultiTenantIssuer("https://login.microsoftonline.com/organizations/v2.0") {
+		t.Error("expected organizations to be recognized as Microsoft multi-tenant issuer")
+	}
+	if isMicrosoftMultiTenantIssuer("https://accounts.google.com") {
+		t.Error("expected google to not be recognized as Microsoft multi-tenant issuer")
+	}
+}

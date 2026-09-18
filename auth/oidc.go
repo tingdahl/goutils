@@ -74,6 +74,27 @@ func (r *OIDCRegistry) GetProviderByClientID(clientID string) *RegisteredProvide
 	return nil
 }
 
+func isMicrosoftMultiTenantIssuer(issuer string) bool {
+	return strings.Contains(issuer, "login.microsoftonline.com/common") ||
+		strings.Contains(issuer, "login.microsoftonline.com/organizations") ||
+		strings.Contains(issuer, "login.microsoftonline.com/consumers")
+}
+
+type msMultiTenantVerifier struct {
+	underlying TokenVerifier
+}
+
+func (m *msMultiTenantVerifier) Verify(ctx context.Context, rawIDToken string) (*oidc.IDToken, error) {
+	token, err := m.underlying.Verify(ctx, rawIDToken)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(token.Issuer, "https://login.microsoftonline.com/") || !strings.HasSuffix(token.Issuer, "/v2.0") {
+		return nil, fmt.Errorf("oidc: invalid issuer %q for Microsoft multi-tenant provider", token.Issuer)
+	}
+	return token, nil
+}
+
 // InitOIDCRegistry parses JSON configuration and initializes all OIDC providers via remote discovery.
 func InitOIDCRegistry(ctx context.Context, configJSON string) (*OIDCRegistry, error) {
 	if strings.TrimSpace(configJSON) == "" {
@@ -95,12 +116,25 @@ func InitOIDCRegistry(ctx context.Context, configJSON string) (*OIDCRegistry, er
 			return nil, fmt.Errorf("invalid provider config: id, issuer, and client_id are required (got id=%q, issuer=%q)", p.ID, p.Issuer)
 		}
 
-		provider, err := oidc.NewProvider(ctx, p.Issuer)
+		providerCtx := ctx
+		isMSMultiTenant := isMicrosoftMultiTenantIssuer(p.Issuer)
+		if isMSMultiTenant {
+			providerCtx = oidc.InsecureIssuerURLContext(ctx, "https://login.microsoftonline.com/{tenantid}/v2.0")
+		}
+
+		provider, err := oidc.NewProvider(providerCtx, p.Issuer)
 		if err != nil {
 			return nil, fmt.Errorf("error initializing OIDC provider %q (%s): %w", p.ID, p.Issuer, err)
 		}
 
-		verifier := provider.Verifier(&oidc.Config{ClientID: p.ClientID})
+		verifierConfig := &oidc.Config{ClientID: p.ClientID}
+		if isMSMultiTenant {
+			verifierConfig.SkipIssuerCheck = true
+		}
+		var verifier TokenVerifier = provider.Verifier(verifierConfig)
+		if isMSMultiTenant {
+			verifier = &msMultiTenantVerifier{underlying: verifier}
+		}
 		clientSecret := p.ClientSecret
 
 		if p.SecretName != "" && clientSecret == "" {
