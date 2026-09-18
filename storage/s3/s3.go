@@ -135,6 +135,7 @@ func (s *S3StorageClient) signAndDo(ctx context.Context, method, targetURL strin
 		req.Header.Set(k, v)
 	}
 
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	if err := s.signer.SignHTTP(ctx, s.creds, req, payloadHash, "s3", s.region, time.Now()); err != nil {
 		return nil, fmt.Errorf("s3: signing error: %w", err)
 	}
