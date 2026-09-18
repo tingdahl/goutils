@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -151,12 +152,20 @@ func (r *OIDCRegistry) LoginHandler(opts *AuthRoutesOptions) http.HandlerFunc {
 			return
 		}
 
-		// Generate random state token
+		isSecure := req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https"
+
+		returnTo := req.URL.Query().Get("return_to")
+		if returnTo == "" {
+			returnTo = defaultReturnTo
+		}
+
+		// Generate random state token with encoded returnTo payload
 		b := make([]byte, 16)
 		_, _ = rand.Read(b)
 		randomHex := hex.EncodeToString(b)
 		exp := time.Now().Add(15 * time.Minute).Unix()
-		state := fmt.Sprintf("%s:%d:%s", p.Config.ID, exp, randomHex)
+		returnToB64 := base64.RawURLEncoding.EncodeToString([]byte(returnTo))
+		state := fmt.Sprintf("%s:%d:%s:%s", p.Config.ID, exp, randomHex, returnToB64)
 
 		cookieName := "oidc_state_" + p.Config.ID
 		http.SetCookie(w, &http.Cookie{
@@ -164,19 +173,17 @@ func (r *OIDCRegistry) LoginHandler(opts *AuthRoutesOptions) http.HandlerFunc {
 			Value:    state,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   isSecure,
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   900,
 		})
 
-		returnTo := req.URL.Query().Get("return_to")
-		if returnTo == "" {
-			returnTo = defaultReturnTo
-		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     "oidc_return_to",
 			Value:    returnTo,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   isSecure,
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   900,
 		})
@@ -309,6 +316,7 @@ func (r *OIDCRegistry) CallbackHandler(opts *AuthRoutesOptions) http.HandlerFunc
 			}
 		}
 
+		isSecure := req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https"
 		returnTo := defaultReturnTo
 		if retCookie, err := req.Cookie("oidc_return_to"); err == nil && retCookie.Value != "" {
 			returnTo = retCookie.Value
@@ -318,7 +326,16 @@ func (r *OIDCRegistry) CallbackHandler(opts *AuthRoutesOptions) http.HandlerFunc
 				Path:     "/",
 				MaxAge:   -1,
 				HttpOnly: true,
+				Secure:   isSecure,
 			})
+		} else {
+			// Fallback: extract return_to from state parameter
+			parts := strings.Split(state, ":")
+			if len(parts) >= 4 {
+				if decoded, err := base64.RawURLEncoding.DecodeString(parts[3]); err == nil && len(decoded) > 0 {
+					returnTo = string(decoded)
+				}
+			}
 		}
 
 		if opts != nil && opts.OnSuccess != nil {
