@@ -30,6 +30,12 @@ func TestMinimalS3Client_WithMockServer(t *testing.T) {
 			return
 		}
 
+		if auth != "" && r.Header.Get("X-Amz-Content-Sha256") == "" {
+			t.Errorf("Request missing required X-Amz-Content-Sha256 header: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		key := strings.TrimPrefix(r.URL.Path, "/test-bucket/")
 
 		switch r.Method {
