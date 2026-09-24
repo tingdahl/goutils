@@ -153,6 +153,57 @@ func (s *BillingClient) AddReceipt(ctx context.Context, req *AddReceiptRequestPr
 	return receipt, nil
 }
 
+// AttachReceiptPDF writes the PDF bytes to storage and updates an existing receipt's PDF metadata.
+func (s *BillingClient) AttachReceiptPDF(ctx context.Context, receiptID string, pdfContent []byte, pdfFilename string) (*PaymentReceiptProto, error) {
+	if receiptID == "" {
+		return nil, errors.New("receipt ID cannot be empty")
+	}
+	if len(pdfContent) == 0 {
+		return nil, errors.New("pdf content cannot be empty")
+	}
+
+	receipt := s.GetReceipt(receiptID)
+	if receipt == nil {
+		return nil, ErrReceiptNotFound
+	}
+
+	tenantID := s.TenantID()
+	objectKey := fmt.Sprintf("%s/%d/%s.pdf", ReceiptsPrefix, tenantID, receipt.Id)
+	_, err := s.Storage.WriteRawObject(ctx, objectKey, pdfContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write receipt PDF to storage: %w", err)
+	}
+
+	if pdfFilename == "" {
+		pdfFilename = fmt.Sprintf("receipt-%s.pdf", receipt.Id)
+	}
+
+	var updatedReceipt *PaymentReceiptProto
+	err = s.Update(ctx, func(msg proto.Message) error {
+		doc := msg.(*BillingProto)
+		doc.UpdatedAtUnixMs = time.Now().UnixMilli()
+		for _, r := range doc.Receipts {
+			if r.Id == receiptID || r.InvoiceId == receiptID {
+				r.ReceiptObjectKey = objectKey
+				r.SizeBytes = int64(len(pdfContent))
+				r.PdfFilename = pdfFilename
+				updatedReceipt = proto.Clone(r).(*PaymentReceiptProto)
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if updatedReceipt == nil {
+		return nil, ErrReceiptNotFound
+	}
+
+	return updatedReceipt, nil
+}
+
 // GetReceiptPDF retrieves the raw PDF bytes and metadata for a specific receipt.
 func (s *BillingClient) GetReceiptPDF(ctx context.Context, receiptID string) ([]byte, *PaymentReceiptProto, error) {
 	receipt := s.GetReceipt(receiptID)

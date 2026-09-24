@@ -128,6 +128,64 @@ func TestBillingClient_AddAndGetReceipt(t *testing.T) {
 	}
 }
 
+func TestBillingClient_AttachReceiptPDF(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	const tenantID int64 = 1005
+	client, err := billing.GetBillingClient(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("GetBillingClient failed: %v", err)
+	}
+
+	// 1. Add receipt with NO PDF
+	req := &billing.AddReceiptRequestProto{
+		Receipt: &billing.PaymentReceiptProto{
+			InvoiceId:   "INV-NO-PDF-1",
+			AmountCents: 5000,
+			Currency:    "USD",
+			Description: "Initial credit without pdf",
+		},
+	}
+	r, err := client.AddReceipt(ctx, req, "user-test")
+	if err != nil {
+		t.Fatalf("AddReceipt failed: %v", err)
+	}
+	if r.ReceiptObjectKey != "" {
+		t.Errorf("expected empty ReceiptObjectKey, got %s", r.ReceiptObjectKey)
+	}
+
+	// 2. Attach PDF asynchronously
+	pdfBytes := []byte("%PDF-1.4 async receipt data")
+	updated, err := client.AttachReceiptPDF(ctx, r.Id, pdfBytes, "invoice-no-pdf-1.pdf")
+	if err != nil {
+		t.Fatalf("AttachReceiptPDF failed: %v", err)
+	}
+	if updated.ReceiptObjectKey == "" {
+		t.Errorf("expected populated ReceiptObjectKey")
+	}
+	if updated.SizeBytes != int64(len(pdfBytes)) {
+		t.Errorf("expected size %d, got %d", len(pdfBytes), updated.SizeBytes)
+	}
+
+	// 3. Verify GetReceipt and GetReceiptPDF work with attached PDF
+	fetched := client.GetReceipt(r.Id)
+	if fetched.ReceiptObjectKey != updated.ReceiptObjectKey {
+		t.Errorf("persisted receipt missing updated object key")
+	}
+
+	content, meta, err := client.GetReceiptPDF(ctx, r.Id)
+	if err != nil {
+		t.Fatalf("GetReceiptPDF failed: %v", err)
+	}
+	if !bytes.Equal(content, pdfBytes) {
+		t.Errorf("pdf content mismatch")
+	}
+	if meta.PdfFilename != "invoice-no-pdf-1.pdf" {
+		t.Errorf("filename mismatch: %s", meta.PdfFilename)
+	}
+}
+
 func TestBillingClient_MultipleTenantsAndIsolation(t *testing.T) {
 	initTestPackage(t)
 	ctx := context.Background()
