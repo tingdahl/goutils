@@ -316,3 +316,160 @@ func TestBillingClient_TenantIDMismatch(t *testing.T) {
 		t.Fatalf("expected tenant ID mismatch error, got nil")
 	}
 }
+
+func TestBillingClient_ErrorsAndEdgeCases(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	client, err := billing.GetBillingClient(ctx, 4001)
+	if err != nil {
+		t.Fatalf("GetBillingClient failed: %v", err)
+	}
+
+	// 1. AddReceipt nil checks
+	if _, err := client.AddReceipt(ctx, nil, "admin"); err != billing.ErrNilReceipt {
+		t.Errorf("expected ErrNilReceipt for nil req, got %v", err)
+	}
+	if _, err := client.AddReceipt(ctx, &billing.AddReceiptRequestProto{Receipt: nil}, "admin"); err != billing.ErrNilReceipt {
+		t.Errorf("expected ErrNilReceipt for nil inner receipt, got %v", err)
+	}
+
+	// 2. AttachReceiptPDF errors
+	if _, err := client.AttachReceiptPDF(ctx, "", []byte("pdf"), "file.pdf"); err == nil {
+		t.Error("expected error for empty receiptID in AttachReceiptPDF")
+	}
+	if _, err := client.AttachReceiptPDF(ctx, "rec-1", nil, "file.pdf"); err == nil {
+		t.Error("expected error for empty pdfContent in AttachReceiptPDF")
+	}
+	if _, err := client.AttachReceiptPDF(ctx, "non-existent", []byte("pdf"), ""); err != billing.ErrReceiptNotFound {
+		t.Errorf("expected ErrReceiptNotFound, got %v", err)
+	}
+
+	// 3. GetReceiptPDF errors
+	if _, _, err := client.GetReceiptPDF(ctx, "non-existent"); err != billing.ErrReceiptNotFound {
+		t.Errorf("expected ErrReceiptNotFound, got %v", err)
+	}
+
+	// 4. GetReceiptDownloadLink errors
+	if _, _, err := client.GetReceiptDownloadLink(ctx, "non-existent", 3600); err != billing.ErrReceiptNotFound {
+		t.Errorf("expected ErrReceiptNotFound, got %v", err)
+	}
+
+	// 5. Add receipt without PDF, then check GetReceiptPDF and GetReceiptDownloadLink
+	r, err := client.AddReceipt(ctx, &billing.AddReceiptRequestProto{
+		Receipt: &billing.PaymentReceiptProto{
+			Description: "No PDF receipt",
+		},
+	}, "admin")
+	if err != nil {
+		t.Fatalf("AddReceipt failed: %v", err)
+	}
+	if _, _, err := client.GetReceiptPDF(ctx, r.Id); err == nil {
+		t.Error("expected error for receipt without attached PDF")
+	}
+	if _, _, err := client.GetReceiptDownloadLink(ctx, r.Id, 3600); err == nil {
+		t.Error("expected error for receipt without attached PDF in GetReceiptDownloadLink")
+	}
+
+	// 6. Non-existent receipt lookup
+	if client.GetReceipt("missing-receipt-id") != nil {
+		t.Error("expected nil for missing receipt ID")
+	}
+
+	// 7. Schema minor & proto helpers
+	if client.GetSchemaMinorVersion() != billing.SchemaMinor {
+		t.Errorf("expected schema minor %d, got %d", billing.SchemaMinor, client.GetSchemaMinorVersion())
+	}
+	if err := client.ReadFromProto(nil); err != nil {
+		t.Errorf("ReadFromProto(nil) failed: %v", err)
+	}
+	var doc billing.BillingProto
+	client.StampVersion(&doc, 2, "commit-sha")
+	if doc.SchemaMinorVersion != 2 || doc.LastModifiedByCommit != "commit-sha" || doc.TenantId != 4001 {
+		t.Errorf("StampVersion failed: %+v", &doc)
+	}
+}
+
+func TestBilling_ProtobufGetters(t *testing.T) {
+	r := &billing.PaymentReceiptProto{
+		Id:               "rec-1",
+		InvoiceId:        "inv-1",
+		AmountCents:      1000,
+		Currency:         "EUR",
+		Description:      "desc",
+		ProductId:        "prod",
+		ReceiptObjectKey: "obj/key",
+		PdfFilename:      "rec.pdf",
+		SizeBytes:        500,
+		CreatedAtUnixMs:  123,
+	}
+	_ = r.GetId()
+	_ = r.GetInvoiceId()
+	_ = r.GetAmountCents()
+	_ = r.GetCurrency()
+	_ = r.GetDescription()
+	_ = r.GetProductId()
+	_ = r.GetReceiptObjectKey()
+	_ = r.GetPdfFilename()
+	_ = r.GetSizeBytes()
+	_ = r.GetCreatedAtUnixMs()
+	_ = r.String()
+	_, _ = r.Descriptor()
+	_ = r.ProtoReflect()
+	r.ProtoMessage()
+
+	req := &billing.AddReceiptRequestProto{
+		Receipt:     r,
+		PdfContent:  []byte("content"),
+		PdfFilename: "file.pdf",
+	}
+	_ = req.GetReceipt()
+	_ = req.GetPdfContent()
+	_ = req.GetPdfFilename()
+	_ = req.String()
+	_, _ = req.Descriptor()
+	_ = req.ProtoReflect()
+	req.ProtoMessage()
+
+	bp := &billing.BillingProto{
+		TenantId:             123,
+		SchemaMinorVersion:   1,
+		LastModifiedByCommit: "commit",
+		UpdatedAtUnixMs:      456,
+		Receipts:             []*billing.PaymentReceiptProto{r},
+	}
+	_ = bp.GetTenantId()
+	_ = bp.GetSchemaMinorVersion()
+	_ = bp.GetLastModifiedByCommit()
+	_ = bp.GetUpdatedAtUnixMs()
+	_ = bp.GetReceipts()
+	_ = bp.String()
+	_, _ = bp.Descriptor()
+	_ = bp.ProtoReflect()
+	bp.ProtoMessage()
+
+	// Nil getters
+	var nilR *billing.PaymentReceiptProto
+	_ = nilR.GetId()
+	_ = nilR.GetInvoiceId()
+	_ = nilR.GetAmountCents()
+	_ = nilR.GetCurrency()
+	_ = nilR.GetDescription()
+	_ = nilR.GetProductId()
+	_ = nilR.GetReceiptObjectKey()
+	_ = nilR.GetPdfFilename()
+	_ = nilR.GetSizeBytes()
+	_ = nilR.GetCreatedAtUnixMs()
+
+	var nilReq *billing.AddReceiptRequestProto
+	_ = nilReq.GetReceipt()
+	_ = nilReq.GetPdfContent()
+	_ = nilReq.GetPdfFilename()
+
+	var nilBp *billing.BillingProto
+	_ = nilBp.GetTenantId()
+	_ = nilBp.GetSchemaMinorVersion()
+	_ = nilBp.GetLastModifiedByCommit()
+	_ = nilBp.GetUpdatedAtUnixMs()
+	_ = nilBp.GetReceipts()
+}

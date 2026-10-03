@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -269,7 +270,123 @@ func TestMicrosoftMultiTenantIssuerCheck(t *testing.T) {
 	if !isMicrosoftMultiTenantIssuer("https://login.microsoftonline.com/organizations/v2.0") {
 		t.Error("expected organizations to be recognized as Microsoft multi-tenant issuer")
 	}
+	if !isMicrosoftMultiTenantIssuer("https://login.microsoftonline.com/consumers/v2.0") {
+		t.Error("expected consumers to be recognized as Microsoft multi-tenant issuer")
+	}
 	if isMicrosoftMultiTenantIssuer("https://accounts.google.com") {
 		t.Error("expected google to not be recognized as Microsoft multi-tenant issuer")
+	}
+}
+
+func TestMsMultiTenantVerifier(t *testing.T) {
+	ctx := context.Background()
+
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	sigB64 := base64.RawURLEncoding.EncodeToString([]byte("sig"))
+
+	// Valid Microsoft issuer
+	validPayload := buildTestJWTPayload("https://login.microsoftonline.com/tenant-123/v2.0", "sub-1", "user@ms.com", "MS User", true)
+	validVerifier := createTestVerifier("https://login.microsoftonline.com/tenant-123/v2.0", "ms-client-id", validPayload)
+	msVerifier := &msMultiTenantVerifier{underlying: validVerifier}
+
+	validJWT := headerB64 + "." + base64.RawURLEncoding.EncodeToString(validPayload) + "." + sigB64
+	token, err := msVerifier.Verify(ctx, validJWT)
+	if err != nil || token == nil {
+		t.Fatalf("expected verification to succeed for valid MS issuer, got: %v", err)
+	}
+
+	// Invalid issuer
+	invalidPayload := buildTestJWTPayload("https://evil.com/v2.0", "sub-1", "user@evil.com", "Evil User", true)
+	invalidVerifier := createTestVerifier("https://evil.com/v2.0", "ms-client-id", invalidPayload)
+	msVerifierInvalid := &msMultiTenantVerifier{underlying: invalidVerifier}
+
+	invalidJWT := headerB64 + "." + base64.RawURLEncoding.EncodeToString(invalidPayload) + "." + sigB64
+	_, err = msVerifierInvalid.Verify(ctx, invalidJWT)
+	if err == nil {
+		t.Fatal("expected error for invalid Microsoft issuer")
+	}
+}
+
+func TestInitOIDCRegistry_Success(t *testing.T) {
+	server, _ := setupMockOIDCServer(t)
+
+	configJSON := fmt.Sprintf(`{
+		"auth_providers": [
+			{
+				"id": "mock-provider",
+				"name": "Mock IDP",
+				"issuer": %q,
+				"client_id": "test-client-id",
+				"client_secret": "test-secret"
+			}
+		]
+	}`, server.URL)
+
+	reg, err := InitOIDCRegistry(context.Background(), configJSON)
+	if err != nil {
+		t.Fatalf("InitOIDCRegistry failed: %v", err)
+	}
+	if len(reg.Providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(reg.Providers))
+	}
+	if reg.Providers[0].Config.ID != "mock-provider" {
+		t.Errorf("expected provider ID mock-provider, got %s", reg.Providers[0].Config.ID)
+	}
+	if reg.Providers[0].ClientSecret != "test-secret" {
+		t.Errorf("expected secret test-secret, got %s", reg.Providers[0].ClientSecret)
+	}
+}
+
+func TestAuthMiddleware_MicrosoftPreferredUsername(t *testing.T) {
+	issuer := "https://login.microsoftonline.com/tenant-1/v2.0"
+	clientID := "ms-client-id"
+
+	// Payload with preferred_username and no email_verified field
+	m := map[string]interface{}{
+		"iss":                issuer,
+		"sub":                "sub-ms-42",
+		"aud":                clientID,
+		"exp":                time.Now().Add(time.Hour).Unix(),
+		"iat":                time.Now().Unix(),
+		"preferred_username": "john.doe@company.com",
+		"name":               "John Doe",
+	}
+	jwtPayload, _ := json.Marshal(m)
+
+	verifier := createTestVerifier(issuer, clientID, jwtPayload)
+	registry := &OIDCRegistry{
+		Providers: []RegisteredProvider{
+			{
+				Config:   AuthProviderConfig{ID: "microsoft", Issuer: issuer, ClientID: clientID},
+				Verifier: verifier,
+			},
+		},
+	}
+
+	var capturedID UserIdentity
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedID, _ = GetUserIdentity(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	payloadB64 := base64.RawURLEncoding.EncodeToString(jwtPayload)
+	sigB64 := base64.RawURLEncoding.EncodeToString([]byte("sig"))
+	testJWT := headerB64 + "." + payloadB64 + "." + sigB64
+
+	req := httptest.NewRequest("GET", "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+testJWT)
+	rec := httptest.NewRecorder()
+
+	AuthMiddleware(registry, nil, nil)(handler).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if capturedID.Email != "john.doe@company.com" {
+		t.Errorf("expected email from preferred_username, got %s", capturedID.Email)
+	}
+	if !capturedID.EmailVerified {
+		t.Errorf("expected emailVerified true for microsoft provider")
 	}
 }

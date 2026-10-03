@@ -513,4 +513,201 @@ func TestEntitlement_GetSignedURL(t *testing.T) {
 	if url != expectedURL {
 		t.Errorf("expected signed URL %s, got %s", expectedURL, url)
 	}
+
+	// Default duration <= 0
+	urlDefault, err := client.GetSignedURL(ctx, 0)
+	if err != nil || urlDefault == "" {
+		t.Errorf("GetSignedURL default duration failed: %v", err)
+	}
+}
+
+func TestEntitlement_TransactionValidationErrors(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	client, err := entitlement.GetEntitlementClient(ctx, 8001)
+	if err != nil {
+		t.Fatalf("GetEntitlementClient failed: %v", err)
+	}
+
+	// 1. Nil transaction
+	var nilTx *entitlement.EntitlementTransactionProto
+	if err := client.AddTransaction(ctx, nilTx); err == nil {
+		t.Error("expected error for nil transaction")
+	}
+
+	// 2. EffectiveAtUnixMs <= 0
+	txNoEff := &entitlement.EntitlementTransactionProto{
+		DimensionValues: map[int32]int64{1: 10},
+		Description:     "test",
+	}
+	if err := client.AddTransaction(ctx, txNoEff); err == nil {
+		t.Error("expected error for missing effective_at_unix_ms")
+	}
+
+	// 3. Empty DimensionValues
+	txNoDims := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		Description:       "test",
+	}
+	if err := client.AddTransaction(ctx, txNoDims); err == nil {
+		t.Error("expected error for empty dimension_values")
+	}
+
+	// 4. Empty Description
+	txNoDesc := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		DimensionValues:   map[int32]int64{1: 10},
+	}
+	if err := client.AddTransaction(ctx, txNoDesc); err == nil {
+		t.Error("expected error for empty description")
+	}
+
+	// 5. Lease transaction validation errors
+	txLeaseNoExp := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		DimensionValues:   map[int32]int64{1: 10},
+		Description:       "lease",
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE,
+	}
+	if err := client.AddTransaction(ctx, txLeaseNoExp); err == nil {
+		t.Error("expected error for lease transaction without expires_at_unix_ms")
+	}
+
+	txLeaseExpBeforeEff := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		ExpiresAtUnixMs:   500,
+		DimensionValues:   map[int32]int64{1: 10},
+		Description:       "lease",
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE,
+	}
+	if err := client.AddTransaction(ctx, txLeaseExpBeforeEff); err == nil {
+		t.Error("expected error for lease transaction with expires <= effective")
+	}
+
+	// 6. Incrementing transaction with ExpiresAtUnixMs
+	txIncWithExp := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		ExpiresAtUnixMs:   2000,
+		DimensionValues:   map[int32]int64{1: 10},
+		Description:       "inc",
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING,
+	}
+	if err := client.AddTransaction(ctx, txIncWithExp); err == nil {
+		t.Error("expected error for incrementing transaction with expiration")
+	}
+
+	// 7. Replacing transaction with ExpiresAtUnixMs
+	txReplWithExp := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		ExpiresAtUnixMs:   2000,
+		DimensionValues:   map[int32]int64{1: 10},
+		Description:       "repl",
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING,
+	}
+	if err := client.AddTransaction(ctx, txReplWithExp); err == nil {
+		t.Error("expected error for replacing transaction with expiration")
+	}
+
+	// 8. Invalid transaction type
+	txInvalidType := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: 1000,
+		DimensionValues:   map[int32]int64{1: 10},
+		Description:       "invalid",
+		TransactionType:   entitlement.EntitlementTransactionType(99),
+	}
+	if err := client.AddTransaction(ctx, txInvalidType); err == nil {
+		t.Error("expected error for invalid transaction type")
+	}
+
+	// 9. RemoveTransaction not found
+	if err := client.RemoveTransaction(ctx, 9999); err == nil {
+		t.Error("expected error removing non-existent transaction")
+	}
+}
+
+func TestEntitlement_ProtobufGetters(t *testing.T) {
+	dim := &entitlement.EntitlementDimensionProto{
+		Name: "dim1",
+	}
+	_ = dim.GetName()
+	_ = dim.String()
+	_, _ = dim.Descriptor()
+	_ = dim.ProtoReflect()
+	dim.ProtoMessage()
+
+	tx := &entitlement.EntitlementTransactionProto{
+		TransactionId:        1,
+		CreatedAtUnixMs:      100,
+		EffectiveAtUnixMs:    200,
+		ExpiresAtUnixMs:      300,
+		TransactionType:      entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE,
+		DimensionValues:      map[int32]int64{1: 5},
+		Description:          "tx desc",
+		InvoiceNumber:        "inv-123",
+		BillingTransactionId: 999,
+		Labels:               map[string]string{"k": "v"},
+	}
+	_ = tx.GetTransactionId()
+	_ = tx.GetCreatedAtUnixMs()
+	_ = tx.GetEffectiveAtUnixMs()
+	_ = tx.GetExpiresAtUnixMs()
+	_ = tx.GetTransactionType()
+	_ = tx.GetDimensionValues()
+	_ = tx.GetDescription()
+	_ = tx.GetInvoiceNumber()
+	_ = tx.GetBillingTransactionId()
+	_ = tx.GetLabels()
+	_ = tx.String()
+	_, _ = tx.Descriptor()
+	_ = tx.ProtoReflect()
+	tx.ProtoMessage()
+
+	ep := &entitlement.EntitlementProto{
+		TenantId:             123,
+		SchemaMinorVersion:   1,
+		LastModifiedByCommit: "commit",
+		Dimensions:           map[int32]*entitlement.EntitlementDimensionProto{1: dim},
+		Transactions:         []*entitlement.EntitlementTransactionProto{tx},
+	}
+	_ = ep.GetTenantId()
+	_ = ep.GetSchemaMinorVersion()
+	_ = ep.GetLastModifiedByCommit()
+	_ = ep.GetDimensions()
+	_ = ep.GetTransactions()
+	_ = ep.String()
+	_, _ = ep.Descriptor()
+	_ = ep.ProtoReflect()
+	ep.ProtoMessage()
+
+	var txType entitlement.EntitlementTransactionType = entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_LEASE
+	_ = txType.Enum()
+	_ = txType.String()
+	_ = txType.Descriptor()
+	_ = txType.Type()
+	_ = txType.Number()
+	_, _ = txType.EnumDescriptor()
+
+	// Nil getters
+	var nilDim *entitlement.EntitlementDimensionProto
+	_ = nilDim.GetName()
+
+	var nilTx *entitlement.EntitlementTransactionProto
+	_ = nilTx.GetTransactionId()
+	_ = nilTx.GetCreatedAtUnixMs()
+	_ = nilTx.GetEffectiveAtUnixMs()
+	_ = nilTx.GetExpiresAtUnixMs()
+	_ = nilTx.GetTransactionType()
+	_ = nilTx.GetDimensionValues()
+	_ = nilTx.GetDescription()
+	_ = nilTx.GetInvoiceNumber()
+	_ = nilTx.GetBillingTransactionId()
+	_ = nilTx.GetLabels()
+
+	var nilEp *entitlement.EntitlementProto
+	_ = nilEp.GetTenantId()
+	_ = nilEp.GetSchemaMinorVersion()
+	_ = nilEp.GetLastModifiedByCommit()
+	_ = nilEp.GetDimensions()
+	_ = nilEp.GetTransactions()
 }

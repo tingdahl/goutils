@@ -343,3 +343,170 @@ func TestRepository_SingleflightConcurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestRepository_CrossPod_CacheInvalidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("CheckAlways_CrossPodInvalidation", func(t *testing.T) {
+		store := newMockDocStorage()
+		initialData, _ := proto.Marshal(wrapperspb.String("initial-pod-state"))
+		store.data["shared-doc"] = initialData
+		store.revisions["shared-doc"] = "rev-1"
+
+		factoryA := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+		factoryB := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+
+		repoA := NewRepository(factoryA, WithRevisionPolicy(CheckAlways))
+		repoB := NewRepository(factoryB, WithRevisionPolicy(CheckAlways))
+
+		// Both Pod A and Pod B load the document
+		docA, err := repoA.Get(ctx, "shared-doc")
+		if err != nil {
+			t.Fatalf("pod A Get failed: %v", err)
+		}
+		docB, err := repoB.Get(ctx, "shared-doc")
+		if err != nil {
+			t.Fatalf("pod B Get failed: %v", err)
+		}
+
+		if docA.client.StringValue() != "initial-pod-state" || docB.client.StringValue() != "initial-pod-state" {
+			t.Fatalf("initial states mismatch")
+		}
+
+		// Pod A updates the document
+		err = docA.Update(ctx, func(msg proto.Message) error {
+			if s, ok := msg.(*wrapperspb.StringValue); ok {
+				s.Value = "mutated-by-pod-a"
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("pod A update failed: %v", err)
+		}
+
+		// Pod B gets the document with CheckAlways -> must detect revision change and reload
+		docBRefreshed, err := repoB.Get(ctx, "shared-doc")
+		if err != nil {
+			t.Fatalf("pod B Get refreshed failed: %v", err)
+		}
+		if docBRefreshed.client.StringValue() != "mutated-by-pod-a" {
+			t.Fatalf("expected pod B to observe pod A's update 'mutated-by-pod-a', got %q", docBRefreshed.client.StringValue())
+		}
+		if docBRefreshed.Revision != docA.Revision {
+			t.Fatalf("expected pod B revision %q to match pod A revision %q", docBRefreshed.Revision, docA.Revision)
+		}
+	})
+
+	t.Run("CheckInterval_CrossPodInvalidation", func(t *testing.T) {
+		store := newMockDocStorage()
+		initialData, _ := proto.Marshal(wrapperspb.String("v1"))
+		store.data["shared-doc"] = initialData
+		store.revisions["shared-doc"] = "rev-1"
+
+		factoryA := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+		factoryB := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+
+		repoA := NewRepository(factoryA, WithRevisionPolicy(CheckAlways))
+		repoB := NewRepository(factoryB, WithRevisionPolicy(CheckInterval(50*time.Millisecond)))
+
+		docA, _ := repoA.Get(ctx, "shared-doc")
+		docB, _ := repoB.Get(ctx, "shared-doc")
+		if docB.client.StringValue() != "v1" {
+			t.Fatalf("expected v1 for Pod B, got %s", docB.client.StringValue())
+		}
+
+		// Pod A updates document
+		err := docA.Update(ctx, func(msg proto.Message) error {
+			if s, ok := msg.(*wrapperspb.StringValue); ok {
+				s.Value = "v2"
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("pod A update failed: %v", err)
+		}
+
+		// Immediate Pod B access (< 50ms): serves cached data "v1"
+		docBCached, err := repoB.Get(ctx, "shared-doc")
+		if err != nil {
+			t.Fatalf("pod B cached Get failed: %v", err)
+		}
+		if docBCached.client.StringValue() != "v1" {
+			t.Fatalf("expected cached v1 before interval elapsed, got %s", docBCached.client.StringValue())
+		}
+
+		// Wait for interval to elapse
+		time.Sleep(60 * time.Millisecond)
+
+		// Pod B access (> 50ms): checks revision, detects change, reloads to "v2"
+		docBUpdated, err := repoB.Get(ctx, "shared-doc")
+		if err != nil {
+			t.Fatalf("pod B updated Get failed: %v", err)
+		}
+		if docBUpdated.client.StringValue() != "v2" {
+			t.Fatalf("expected reloaded v2 after interval elapsed, got %s", docBUpdated.client.StringValue())
+		}
+	})
+
+	t.Run("CheckNever_CrossPodCache", func(t *testing.T) {
+		store := newMockDocStorage()
+		initialData, _ := proto.Marshal(wrapperspb.String("v1"))
+		store.data["shared-doc"] = initialData
+		store.revisions["shared-doc"] = "rev-1"
+
+		factoryA := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+		factoryB := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+
+		repoA := NewRepository(factoryA, WithRevisionPolicy(CheckAlways))
+		repoB := NewRepository(factoryB, WithRevisionPolicy(CheckNever))
+
+		docA, _ := repoA.Get(ctx, "shared-doc")
+		docB, _ := repoB.Get(ctx, "shared-doc")
+		if docB.client.StringValue() != "v1" {
+			t.Fatalf("expected v1 for Pod B, got %s", docB.client.StringValue())
+		}
+
+		// Pod A updates document
+		err := docA.Update(ctx, func(msg proto.Message) error {
+			if s, ok := msg.(*wrapperspb.StringValue); ok {
+				s.Value = "v2"
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("pod A update failed: %v", err)
+		}
+
+		// Pod B calls Get() multiple times -> serves cached data under CheckNever
+		for i := 0; i < 5; i++ {
+			docBCached, err := repoB.Get(ctx, "shared-doc")
+			if err != nil {
+				t.Fatalf("pod B Get failed: %v", err)
+			}
+			if docBCached.client.StringValue() != "v1" {
+				t.Fatalf("expected cached v1 under CheckNever, got %s", docBCached.client.StringValue())
+			}
+		}
+
+		// Pod B calls with WithForceCheck() -> forces reload to "v2"
+		docBForced, err := repoB.Get(ctx, "shared-doc", WithForceCheck())
+		if err != nil {
+			t.Fatalf("pod B forced Get failed: %v", err)
+		}
+		if docBForced.client.StringValue() != "v2" {
+			t.Fatalf("expected v2 after WithForceCheck, got %s", docBForced.client.StringValue())
+		}
+	})
+}

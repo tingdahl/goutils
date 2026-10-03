@@ -164,6 +164,10 @@ func (d *Document) Update(ctx context.Context, updateFn DocumentUpdateFunc) erro
 	defer d.Rwlock.Unlock()
 
 	for i := 0; i < 100; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if err := d.DoLoad(); err != nil {
 			return err
 		}
@@ -196,6 +200,9 @@ func (d *Document) Update(ctx context.Context, updateFn DocumentUpdateFunc) erro
 
 		newRev, err := d.Storage.WriteObjectIfRevisionMatch(ctx, d.ObjectName, newProtobuf, d.Revision)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if errors.Is(err, storage.RevisionWriteError) || err == storage.RevisionWriteError {
 				continue
 			}

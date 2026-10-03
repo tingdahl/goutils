@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -e
+
+echo "==> Running pre-commit checks..."
+
+# 1. Check formatting / vet
+echo "--> Running go vet ./..."
+go vet ./...
+
+# 2. Run test suite with race detector
+echo "--> Running go test -race ./..."
+go test -race ./...
+
+echo "==> All pre-commit checks passed successfully!"
