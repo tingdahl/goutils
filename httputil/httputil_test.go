@@ -21,6 +21,24 @@ func TestGetPortAndHeaders(t *testing.T) {
 		t.Errorf("GetPort() = %q, want '9999'", GetPort())
 	}
 
+	// SetBearerToken and SetRequestJSON
+	req := httptest.NewRequest("GET", "/", nil)
+	SetBearerToken(req, "test-token")
+	if req.Header.Get(HeaderAuthorization) != "Bearer test-token" {
+		t.Errorf("expected Bearer test-token, got %s", req.Header.Get(HeaderAuthorization))
+	}
+	SetRequestJSON(req)
+	if req.Header.Get(HeaderContentType) != ContentTypeJSON {
+		t.Errorf("expected application/json, got %s", req.Header.Get(HeaderContentType))
+	}
+
+	// SetProtobufHeader
+	recProto := httptest.NewRecorder()
+	SetProtobufHeader(recProto)
+	if recProto.Header().Get(HeaderContentType) != ContentTypeProtobuf {
+		t.Errorf("expected Content-Type %s, got %s", ContentTypeProtobuf, recProto.Header().Get(HeaderContentType))
+	}
+
 	// SetJSONHeader
 	rec := httptest.NewRecorder()
 	SetJSONHeader(rec)
@@ -36,7 +54,7 @@ func TestGetPortAndHeaders(t *testing.T) {
 
 	// RestrictiveRobotsTxtHandler
 	handler := RestrictiveRobotsTxtHandler()
-	req := httptest.NewRequest("GET", "/robots.txt", nil)
+	req = httptest.NewRequest("GET", "/robots.txt", nil)
 	recRobots := httptest.NewRecorder()
 	handler.ServeHTTP(recRobots, req)
 

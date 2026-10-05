@@ -29,11 +29,26 @@ func GetPort() string {
 }
 
 // SetJSONHeader sets the Content-Type header to application/json; charset=utf-8.
+// SetProtobufHeader sets the Content-Type header to application/x-protobuf.
+func SetProtobufHeader(w http.ResponseWriter) {
+	w.Header().Set(HeaderContentType, ContentTypeProtobuf)
+}
+
 func SetJSONHeader(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 }
 
 // SetCacheControl sets the Cache-Control header on the response writer.
+// SetBearerToken sets the Authorization header with Bearer prefix on an outgoing request.
+func SetBearerToken(req *http.Request, token string) {
+	req.Header.Set(HeaderAuthorization, BearerPrefix+token)
+}
+
+// SetRequestJSON sets the Content-Type header on an outgoing request to application/json.
+func SetRequestJSON(req *http.Request) {
+	req.Header.Set(HeaderContentType, ContentTypeJSON)
+}
+
 func SetCacheControl(w http.ResponseWriter, directive string) {
 	w.Header().Set("Cache-Control", directive)
 }
