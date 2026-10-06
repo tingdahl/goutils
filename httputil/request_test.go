@@ -127,3 +127,41 @@ func TestWriteSignedURLResponse(t *testing.T) {
 		t.Errorf("Expected URL %q, got %q", url, resp.URL)
 	}
 }
+
+func TestSetMaxByteHeader(t *testing.T) {
+	// Nil request or nil body returns nil
+	if res := SetMaxByteHeader(httptest.NewRecorder(), nil, 1024); res != nil {
+		t.Errorf("expected nil for nil request, got %v", res)
+	}
+	reqNilBody := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqNilBody.Body = nil
+	if res := SetMaxByteHeader(httptest.NewRecorder(), reqNilBody, 1024); res != nil {
+		t.Errorf("expected nil for nil body, got %v", res)
+	}
+
+	// Non-nil body is wrapped with MaxBytesReader
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("1234567890"))
+	w := httptest.NewRecorder()
+	req.Body = SetMaxByteHeader(w, req, 5)
+	if req.Body == nil {
+		t.Fatal("expected non-nil wrapped body")
+	}
+
+	// Reading up to 5 bytes succeeds, 6th byte fails with MaxBytesError
+	buf := make([]byte, 10)
+	n, err := req.Body.Read(buf)
+	if n != 5 {
+		t.Errorf("expected 5 bytes read, got %d", n)
+	}
+	_, err = req.Body.Read(buf)
+	if err == nil {
+		t.Errorf("expected error when exceeding max bytes, got nil")
+	}
+
+	// Alias SetMaxBytesReader
+	req2 := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("abc"))
+	req2.Body = SetMaxBytesReader(w, req2, 10)
+	if req2.Body == nil {
+		t.Fatal("expected non-nil body from SetMaxBytesReader")
+	}
+}

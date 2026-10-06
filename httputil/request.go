@@ -46,6 +46,21 @@ func WriteJSONError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(JSONErrorResponse{Error: msg})
 }
 
+// SetMaxByteHeader wraps r.Body with http.MaxBytesReader if r and r.Body are non-nil.
+// If r or r.Body is nil, it safely returns nil.
+func SetMaxByteHeader(w http.ResponseWriter, r *http.Request, maxBytes int64) io.ReadCloser {
+	if r == nil || r.Body == nil {
+		return nil
+	}
+	return http.MaxBytesReader(w, r.Body, maxBytes)
+}
+
+// SetMaxBytesReader wraps r.Body with http.MaxBytesReader if r and r.Body are non-nil.
+// If r or r.Body is nil, it safely returns nil.
+func SetMaxBytesReader(w http.ResponseWriter, r *http.Request, maxBytes int64) io.ReadCloser {
+	return SetMaxByteHeader(w, r, maxBytes)
+}
+
 // ReadLimitedBody reads the request body up to maxBytes. If maxBytes <= 0, DefaultMaxRequestBodySize is used.
 // If the body exceeds the size limit, an HTTP 413 Payload Too Large error is written to w and an error is returned.
 // If reading fails for another reason, an HTTP 400 Bad Request error is written to w.
