@@ -3,6 +3,9 @@
 package s3
 
 import (
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
 	"bytes"
 	"context"
 	"encoding/xml"
@@ -204,5 +207,68 @@ func TestMinimalS3Client_WithMockServer(t *testing.T) {
 	// 9. DeleteObject
 	if err := client.DeleteObject(ctx, "data/doc.pb.zst"); err != nil {
 		t.Fatalf("DeleteObject failed: %v", err)
+	}
+}
+
+func TestS3Client_ReadETagChecksumVerification(t *testing.T) {
+	currentETag := ""
+	payload := []byte("Hello, world! Data integrity test payload.")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, currentETag))
+		w.Write(payload)
+	}))
+	defer server.Close()
+
+	client, err := NewS3StorageClient(map[string]string{
+		EnvS3Bucket:           "test-bucket",
+		EnvS3Region:           "nl-ams",
+		EnvS3Endpoint:         server.URL,
+		EnvAWSAccessKeyID:     "SCWTESTKEY",
+		EnvAWSSecretAccessKey: "SCWTESTSECRET",
+	})
+	if err != nil {
+		t.Fatalf("NewS3StorageClient failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Correct 32-hex MD5 ETag -> Success
+	h := md5.Sum(payload)
+	validMD5 := hex.EncodeToString(h[:])
+	currentETag = validMD5
+	data, etag, err := client.ReadRawObject(ctx, "test.txt")
+	if err != nil {
+		t.Fatalf("Expected success with valid MD5 ETag, got: %v", err)
+	}
+	if etag != validMD5 || string(data) != string(payload) {
+		t.Errorf("Unexpected data or etag: %s, %s", string(data), etag)
+	}
+
+	// 2. Corrupted data / Mismatched 32-hex MD5 ETag -> Detection failure
+	currentETag = "d41d8cd98f00b204e9800998ecf8427e" // MD5 of empty string, does not match payload
+	_, _, err = client.ReadRawObject(ctx, "test.txt")
+	if err == nil || !strings.Contains(err.Error(), "data corruption detected") {
+		t.Fatalf("Expected data corruption error on MD5 mismatch, got: %v", err)
+	}
+
+	// 3. Multipart ETag (ends with -N) -> Skipped, succeeds
+	currentETag = "d41d8cd98f00b204e9800998ecf8427e-2"
+	_, etag, err = client.ReadRawObject(ctx, "test.txt")
+	if err != nil {
+		t.Fatalf("Expected multipart ETag to bypass check, got: %v", err)
+	}
+	if etag != currentETag {
+		t.Errorf("Expected etag %s, got %s", currentETag, etag)
+	}
+
+	// 4. Non-hex/mock ETag -> Skipped, succeeds
+	currentETag = "custom-opaque-etag"
+	_, etag, err = client.ReadRawObject(ctx, "test.txt")
+	if err != nil {
+		t.Fatalf("Expected non-hex ETag to bypass check, got: %v", err)
+	}
+	if etag != currentETag {
+		t.Errorf("Expected etag %s, got %s", currentETag, etag)
 	}
 }

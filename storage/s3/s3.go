@@ -5,6 +5,7 @@ package s3
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -280,6 +281,16 @@ func (s *S3StorageClient) ReadRawObject(ctx context.Context, file string) ([]byt
 	}
 
 	etag := strings.Trim(resp.Header.Get("ETag"), "\"")
+	if len(etag) == 32 && !strings.Contains(etag, "-") {
+		if _, err := hex.DecodeString(etag); err == nil {
+			h := md5.Sum(data)
+			computedETag := hex.EncodeToString(h[:])
+			if !strings.EqualFold(computedETag, etag) {
+				return nil, "", fmt.Errorf("s3: data corruption detected for %s: etag %s != computed md5 %s", file, etag, computedETag)
+			}
+		}
+	}
+
 	return data, etag, nil
 }
 
