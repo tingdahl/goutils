@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -105,9 +106,28 @@ func (m *MockStorageClient) DeleteObject(ctx context.Context, object string) err
 	return nil
 }
 
-// ListPrefixes returns prefixes.
+// ListPrefixes returns common prefixes matching delimiter semantics.
 func (m *MockStorageClient) ListPrefixes(ctx context.Context, prefix, delimiter string) ([]string, error) {
-	return nil, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	set := make(map[string]struct{})
+	for k := range m.objects {
+		if strings.HasPrefix(k, prefix) {
+			rest := k[len(prefix):]
+			if i := strings.Index(rest, delimiter); i >= 0 {
+				set[prefix+rest[:i+len(delimiter)]] = struct{}{}
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil, nil
+	}
+	result := make([]string, 0, len(set))
+	for p := range set {
+		result = append(result, p)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 // ListObjects returns objects matching prefix.
