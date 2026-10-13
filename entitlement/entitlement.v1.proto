@@ -25,6 +25,7 @@ message EntitlementTransactionProto {
     string invoice_number = 8;
     int64 billing_transaction_id = 9;
     map<string, string> labels = 10;
+    string user_id = 11;
 }
 
 message EntitlementProto {

@@ -647,6 +647,7 @@ func TestEntitlement_ProtobufGetters(t *testing.T) {
 		InvoiceNumber:        "inv-123",
 		BillingTransactionId: 999,
 		Labels:               map[string]string{"k": "v"},
+		UserId:               "user-123",
 	}
 	_ = tx.GetTransactionId()
 	_ = tx.GetCreatedAtUnixMs()
@@ -658,6 +659,7 @@ func TestEntitlement_ProtobufGetters(t *testing.T) {
 	_ = tx.GetInvoiceNumber()
 	_ = tx.GetBillingTransactionId()
 	_ = tx.GetLabels()
+	_ = tx.GetUserId()
 	_ = tx.String()
 	_, _ = tx.Descriptor()
 	_ = tx.ProtoReflect()
@@ -703,6 +705,7 @@ func TestEntitlement_ProtobufGetters(t *testing.T) {
 	_ = nilTx.GetInvoiceNumber()
 	_ = nilTx.GetBillingTransactionId()
 	_ = nilTx.GetLabels()
+	_ = nilTx.GetUserId()
 
 	var nilEp *entitlement.EntitlementProto
 	_ = nilEp.GetTenantId()
@@ -711,3 +714,199 @@ func TestEntitlement_ProtobufGetters(t *testing.T) {
 	_ = nilEp.GetDimensions()
 	_ = nilEp.GetTransactions()
 }
+
+func TestEntitlement_UserId_PersistenceAndDecoding(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	const tenantID int64 = 9001
+	client, err := entitlement.GetEntitlementClient(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("GetEntitlementClient failed: %v", err)
+	}
+
+	err = client.AddDimensions(ctx, map[int32]*entitlement.EntitlementDimensionProto{
+		1: {Name: "compute_units"},
+	})
+	if err != nil {
+		t.Fatalf("AddDimensions failed: %v", err)
+	}
+
+	testUserID := "b8b3d68c-1e24-4f99-923c-f8d2270ca8c5"
+	tx := &entitlement.EntitlementTransactionProto{
+		EffectiveAtUnixMs: time.Now().UnixMilli(),
+		DimensionValues:   map[int32]int64{1: 250},
+		Description:       "Compute units allocated by admin",
+		UserId:            testUserID,
+		Labels:            map[string]string{"source": "admin_console"},
+	}
+
+	if err := client.AddTransaction(ctx, tx); err != nil {
+		t.Fatalf("AddTransaction failed: %v", err)
+	}
+
+	// In-memory verification
+	txs := client.Transactions()
+	if len(txs) != 1 {
+		t.Fatalf("expected 1 transaction, got %d", len(txs))
+	}
+	if txs[0].GetUserId() != testUserID || txs[0].UserId != testUserID {
+		t.Errorf("expected transaction UserId %q, got %q (getter: %q)", testUserID, txs[0].UserId, txs[0].GetUserId())
+	}
+
+	// Verify storage persistence & raw decoding
+	expectedKey := "entitlements/9001/entitlement.v1.pb.zst"
+	data, _, err := testStore.ReadObject(ctx, expectedKey)
+	if err != nil {
+		t.Fatalf("failed to read stored object: %v", err)
+	}
+
+	var storedProto entitlement.EntitlementProto
+	if err := proto.Unmarshal(data, &storedProto); err != nil {
+		t.Fatalf("failed to unmarshal stored proto: %v", err)
+	}
+
+	if storedProto.SchemaMinorVersion != entitlement.SchemaMinor {
+		t.Errorf("expected stored SchemaMinorVersion %d, got %d", entitlement.SchemaMinor, storedProto.SchemaMinorVersion)
+	}
+	if len(storedProto.Transactions) != 1 {
+		t.Fatalf("expected 1 stored transaction, got %d", len(storedProto.Transactions))
+	}
+	storedTx := storedProto.Transactions[0]
+	if storedTx.GetUserId() != testUserID || storedTx.UserId != testUserID {
+		t.Errorf("expected stored transaction UserId %q, got %q (getter: %q)", testUserID, storedTx.UserId, storedTx.GetUserId())
+	}
+	if storedTx.Labels["source"] != "admin_console" {
+		t.Errorf("expected label source=admin_console, got %q", storedTx.Labels["source"])
+	}
+
+	// Test decoding via fresh client load
+	freshClient := &entitlement.EntitlementClient{}
+	if err := freshClient.ReadFromProto(data); err != nil {
+		t.Fatalf("freshClient.ReadFromProto failed: %v", err)
+	}
+	if len(freshClient.Transactions()) != 1 {
+		t.Fatalf("expected 1 transaction in freshClient, got %d", len(freshClient.Transactions()))
+	}
+	if freshClient.Transactions()[0].GetUserId() != testUserID {
+		t.Errorf("expected freshClient UserId %q, got %q", testUserID, freshClient.Transactions()[0].GetUserId())
+	}
+}
+
+func TestEntitlement_LegacyTransactionsCompatibility(t *testing.T) {
+	initTestPackage(t)
+	ctx := context.Background()
+
+	const tenantID int64 = 9002
+
+	// Construct a legacy proto where SchemaMinorVersion is 0 and transactions have no UserId set
+	legacyTx := &entitlement.EntitlementTransactionProto{
+		TransactionId:     1,
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_REPLACING,
+		DimensionValues:   map[int32]int64{1: 100},
+		Description:       "Legacy initial purchase without user_id",
+		CreatedAtUnixMs:   1000,
+		EffectiveAtUnixMs: 1000,
+		Labels:            map[string]string{"legacy": "true"},
+		// UserId is intentionally empty
+	}
+
+	legacyProto := &entitlement.EntitlementProto{
+		SchemaMinorVersion:   0,
+		LastModifiedByCommit: "legacy-commit-abc",
+		TenantId:             tenantID,
+		Dimensions: map[int32]*entitlement.EntitlementDimensionProto{
+			1: {Name: "seats"},
+		},
+		Transactions: []*entitlement.EntitlementTransactionProto{legacyTx},
+	}
+
+	data, err := proto.Marshal(legacyProto)
+	if err != nil {
+		t.Fatalf("failed to marshal legacy proto: %v", err)
+	}
+
+	storageKey := "entitlements/9002/entitlement.v1.pb.zst"
+	if _, err := testStore.WriteObject(ctx, storageKey, data); err != nil {
+		t.Fatalf("failed to write legacy object to storage: %v", err)
+	}
+
+	// Load via GetEntitlementClient
+	client, err := entitlement.GetEntitlementClient(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("GetEntitlementClient failed for legacy data: %v", err)
+	}
+
+	txs := client.Transactions()
+	if len(txs) != 1 {
+		t.Fatalf("expected 1 legacy transaction, got %d", len(txs))
+	}
+	if txs[0].UserId != "" {
+		t.Errorf("expected empty UserId on legacy transaction, got %q", txs[0].UserId)
+	}
+	if txs[0].GetUserId() != "" {
+		t.Errorf("expected empty GetUserId() on legacy transaction, got %q", txs[0].GetUserId())
+	}
+
+	// Verify ledger calculation works with legacy transaction
+	vals := client.GetCurrentEntitlementValues()
+	if vals[1] != 100 {
+		t.Errorf("expected seats=100 from legacy transaction, got %d", vals[1])
+	}
+
+	// Add a new transaction with a user_id
+	newUserID := "063943ca-62d2-4416-b8f6-b183617be34f"
+	err = client.AddTransaction(ctx, &entitlement.EntitlementTransactionProto{
+		TransactionType:   entitlement.EntitlementTransactionType_ENTITLEMENT_TRANSACTION_TYPE_INCREMENTING,
+		EffectiveAtUnixMs: 2000,
+		DimensionValues:   map[int32]int64{1: 50},
+		Description:       "Incremental purchase by user",
+		UserId:            newUserID,
+	})
+	if err != nil {
+		t.Fatalf("AddTransaction with UserId on legacy doc failed: %v", err)
+	}
+
+	// Check combined transactions
+	combinedTxs := client.Transactions()
+	if len(combinedTxs) != 2 {
+		t.Fatalf("expected 2 transactions, got %d", len(combinedTxs))
+	}
+	// Historical transaction remains without user_id
+	if combinedTxs[0].GetUserId() != "" {
+		t.Errorf("expected legacy transaction UserId to remain empty, got %q", combinedTxs[0].GetUserId())
+	}
+	// New transaction has user_id
+	if combinedTxs[1].GetUserId() != newUserID {
+		t.Errorf("expected new transaction UserId %q, got %q", newUserID, combinedTxs[1].GetUserId())
+	}
+
+	// Verify updated ledger values
+	updatedVals := client.GetCurrentEntitlementValues()
+	if updatedVals[1] != 150 {
+		t.Errorf("expected seats=150 after adding incremental tx, got %d", updatedVals[1])
+	}
+
+	// Verify saved document in storage has updated SchemaMinorVersion and both transactions
+	savedData, _, err := testStore.ReadObject(ctx, storageKey)
+	if err != nil {
+		t.Fatalf("failed to read updated storage object: %v", err)
+	}
+	var savedProto entitlement.EntitlementProto
+	if err := proto.Unmarshal(savedData, &savedProto); err != nil {
+		t.Fatalf("failed to unmarshal saved proto: %v", err)
+	}
+	if savedProto.SchemaMinorVersion != entitlement.SchemaMinor {
+		t.Errorf("expected saved SchemaMinorVersion %d, got %d", entitlement.SchemaMinor, savedProto.SchemaMinorVersion)
+	}
+	if len(savedProto.Transactions) != 2 {
+		t.Fatalf("expected 2 saved transactions, got %d", len(savedProto.Transactions))
+	}
+	if savedProto.Transactions[0].GetUserId() != "" {
+		t.Errorf("expected saved legacy tx UserId empty, got %q", savedProto.Transactions[0].GetUserId())
+	}
+	if savedProto.Transactions[1].GetUserId() != newUserID {
+		t.Errorf("expected saved new tx UserId %q, got %q", newUserID, savedProto.Transactions[1].GetUserId())
+	}
+}
+
