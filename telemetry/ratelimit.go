@@ -1,3 +1,5 @@
+//go:generate go run ./gen_cloudflare_ips.go
+
 package telemetry
 
 import (
@@ -100,7 +102,14 @@ func IsTrustedProxy(remoteIP string) bool {
 			if entry == "" {
 				continue
 			}
-			if strings.Contains(entry, "/") {
+			if entry == "*" {
+				return true
+			}
+			if strings.EqualFold(entry, "cloudflare") || strings.EqualFold(entry, "cf") {
+				if IsCloudflareIP(parsedIP) {
+					return true
+				}
+			} else if strings.Contains(entry, "/") {
 				_, cidrNet, err := net.ParseCIDR(entry)
 				if err == nil && cidrNet.Contains(parsedIP) {
 					return true
@@ -112,8 +121,8 @@ func IsTrustedProxy(remoteIP string) bool {
 		return false
 	}
 
-	// By default, trust loopback and RFC 1918 / RFC 4193 private networks
-	return parsedIP.IsLoopback() || parsedIP.IsPrivate()
+	// By default, trust loopback, RFC 1918 / RFC 4193 private networks, and Cloudflare edge proxies
+	return parsedIP.IsLoopback() || parsedIP.IsPrivate() || IsCloudflareIP(parsedIP)
 }
 
 // GetClientIP extracts the real client IP address from standard reverse proxy headers or remote address.
@@ -125,6 +134,13 @@ func GetClientIP(r *http.Request) string {
 	}
 
 	if IsTrustedProxy(host) {
+		if cfip := r.Header.Get("CF-Connecting-IP"); cfip != "" {
+			ip := strings.TrimSpace(cfip)
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
+
 		if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
 			ip := strings.TrimSpace(xrip)
 			if net.ParseIP(ip) != nil {
