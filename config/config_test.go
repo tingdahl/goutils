@@ -219,6 +219,57 @@ func TestConfigManager_AllGetters(t *testing.T) {
 	if cm.GetSCWOrganizationID() != "scw-org" {
 		t.Errorf("GetSCWOrganizationID mismatch")
 	}
+
+	// SCWRegion tests (defaulting to nl-ams, normalizing shorthand like "ams")
+	cmRegionDefault := NewConfigManager(func(k string) string { return "" })
+	if got := cmRegionDefault.GetSCWRegion(); got != DefaultSCWRegion {
+		t.Errorf("GetSCWRegion() default = %q, want %q", got, DefaultSCWRegion)
+	}
+	cmRegionShorthandDefaultRegion := NewConfigManager(func(k string) string {
+		if k == EnvDefaultRegion {
+			return "ams"
+		}
+		return ""
+	})
+	if got := cmRegionShorthandDefaultRegion.GetSCWRegion(); got != "nl-ams" {
+		t.Errorf("GetSCWRegion() DEFAULT_REGION=ams = %q, want 'nl-ams'", got)
+	}
+	cmRegionDefaultRegion := NewConfigManager(func(k string) string {
+		if k == EnvSCWDefaultRegion {
+			return "fr-par"
+		}
+		return ""
+	})
+	if got := cmRegionDefaultRegion.GetSCWRegion(); got != "fr-par" {
+		t.Errorf("GetSCWRegion() default region fallback = %q, want 'fr-par'", got)
+	}
+	cmRegionExplicit := NewConfigManager(func(k string) string {
+		if k == EnvSCWRegion {
+			return "par"
+		}
+		if k == EnvSCWDefaultRegion {
+			return "nl-ams"
+		}
+		return ""
+	})
+	if got := cmRegionExplicit.GetSCWRegion(); got != "fr-par" {
+		t.Errorf("GetSCWRegion() explicit par = %q, want 'fr-par'", got)
+	}
+
+	// EmailOverrideTo tests
+	cmEmailEmpty := NewConfigManager(func(k string) string { return "" })
+	if got := cmEmailEmpty.GetEmailOverrideTo(); got != "" {
+		t.Errorf("GetEmailOverrideTo() empty = %q, want ''", got)
+	}
+	cmEmailExplicit := NewConfigManager(func(k string) string {
+		if k == EnvEmailOverrideTo {
+			return "override@example.com"
+		}
+		return ""
+	})
+	if got := cmEmailExplicit.GetEmailOverrideTo(); got != "override@example.com" {
+		t.Errorf("GetEmailOverrideTo() explicit = %q, want 'override@example.com'", got)
+	}
 }
 
 func TestDefaultConfig(t *testing.T) {
@@ -239,5 +290,15 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if GetConfigString(EnvEnvironment) != "test" {
 		t.Errorf("GetConfigString() = %q, want 'test'", GetConfigString(EnvEnvironment))
+	}
+
+	if GetSCWRegion() == "" {
+		t.Error("GetSCWRegion() returned empty string")
+	}
+
+	os.Setenv(EnvEmailOverrideTo, "test-override@example.com")
+	defer os.Unsetenv(EnvEmailOverrideTo)
+	if GetEmailOverrideTo() != "test-override@example.com" {
+		t.Errorf("GetEmailOverrideTo() = %q, want 'test-override@example.com'", GetEmailOverrideTo())
 	}
 }

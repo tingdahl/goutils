@@ -20,6 +20,8 @@ const (
 	EnvSCWDefaultProjectID = "SCW_DEFAULT_PROJECT_ID"
 	EnvS3Region            = "S3_REGION"
 	EnvSCWRegion           = "SCW_REGION"
+	EnvSCWDefaultRegion    = "SCW_DEFAULT_REGION"
+	EnvDefaultRegion       = "DEFAULT_REGION"
 	EnvSCWDefaultZone      = "SCW_DEFAULT_ZONE"
 	EnvS3AppDataName       = "S3_APPDATA_NAME"
 	EnvS3Endpoint          = "S3_ENDPOINT"
@@ -33,11 +35,13 @@ const (
 	EnvSCWAccessKey        = "SCW_ACCESS_KEY"
 	EnvSCWSecretKey        = "SCW_SECRET_KEY"
 	EnvSCWOrganizationID   = "SCW_DEFAULT_ORGANIZATION_ID"
+	EnvEmailOverrideTo     = "EMAIL_OVERRIDE_TO"
 
 	DefaultEnvironment = "dev"
 	DefaultPort        = "8080"
 	DefaultTimezone    = "Europe/Stockholm"
 	DefaultLogLevel    = "INFO"
+	DefaultSCWRegion   = "nl-ams"
 )
 
 // ConfigManager provides centralized access to application configuration and secrets from the environment.
@@ -218,6 +222,40 @@ func (c *ConfigManager) GetSCWOrganizationID() string {
 	return c.GetConfigString(EnvSCWOrganizationID)
 }
 
+// NormalizeSCWRegion normalizes shorthand region names (e.g. "ams" -> "nl-ams", "par" -> "fr-par", "waw" -> "pl-waw")
+// to official Scaleway region identifiers.
+func NormalizeSCWRegion(region string) string {
+	switch region {
+	case "ams":
+		return "nl-ams"
+	case "par":
+		return "fr-par"
+	case "waw":
+		return "pl-waw"
+	default:
+		return region
+	}
+}
+
+// GetSCWRegion returns SCW_REGION, falling back to SCW_DEFAULT_REGION, DEFAULT_REGION, or DefaultSCWRegion ("nl-ams") if unset.
+func (c *ConfigManager) GetSCWRegion() string {
+	if val := c.GetConfigString(EnvSCWRegion); val != "" {
+		return NormalizeSCWRegion(val)
+	}
+	if val := c.GetConfigString(EnvSCWDefaultRegion); val != "" {
+		return NormalizeSCWRegion(val)
+	}
+	if val := c.GetConfigString(EnvDefaultRegion); val != "" {
+		return NormalizeSCWRegion(val)
+	}
+	return DefaultSCWRegion
+}
+
+// GetEmailOverrideTo returns EMAIL_OVERRIDE_TO.
+func (c *ConfigManager) GetEmailOverrideTo() string {
+	return c.GetConfigString(EnvEmailOverrideTo)
+}
+
 // Package-level helper functions delegating to default singleton
 
 // GetEnvironment returns the current environment from default Config.
@@ -233,4 +271,14 @@ func GetPort() string {
 // GetConfigString retrieves a configuration value from default Config.
 func GetConfigString(key string) string {
 	return Config().GetConfigString(key)
+}
+
+// GetSCWRegion returns the Scaleway region from default Config.
+func GetSCWRegion() string {
+	return Config().GetSCWRegion()
+}
+
+// GetEmailOverrideTo returns the email override address from default Config.
+func GetEmailOverrideTo() string {
+	return Config().GetEmailOverrideTo()
 }
