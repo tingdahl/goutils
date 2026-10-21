@@ -337,56 +337,315 @@ func TestInitOIDCRegistry_Success(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_MicrosoftPreferredUsername(t *testing.T) {
-	issuer := "https://login.microsoftonline.com/tenant-1/v2.0"
-	clientID := "ms-client-id"
 
-	// Payload with preferred_username and no email_verified field
-	m := map[string]interface{}{
-		"iss":                issuer,
-		"sub":                "sub-ms-42",
-		"aud":                clientID,
-		"exp":                time.Now().Add(time.Hour).Unix(),
-		"iat":                time.Now().Unix(),
-		"preferred_username": "john.doe@company.com",
-		"name":               "John Doe",
+func TestUserIdentity_StableSubject(t *testing.T) {
+	// Microsoft with tid:oid
+	idMS := UserIdentity{
+		ProviderID: MicrosoftProviderID,
+		Subject:    "ms-sub-123",
+		TenantID:   "tenant-abc",
+		ObjectID:   "oid-xyz",
 	}
-	jwtPayload, _ := json.Marshal(m)
+	sub, err := idMS.StableSubject()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sub != "tenant-abc:oid-xyz" {
+		t.Errorf("got %q, want tenant-abc:oid-xyz", sub)
+	}
 
-	verifier := createTestVerifier(issuer, clientID, jwtPayload)
-	registry := &OIDCRegistry{
-		Providers: []RegisteredProvider{
-			{
-				Config:   AuthProviderConfig{ID: "microsoft", Issuer: issuer, ClientID: clientID},
-				Verifier: verifier,
+	// Microsoft missing tid
+	idMissingTID := UserIdentity{
+		ProviderID: MicrosoftProviderID,
+		ObjectID:   "oid-xyz",
+	}
+	if _, err := idMissingTID.StableSubject(); err == nil {
+		t.Error("expected error for missing tid, got nil")
+	}
+
+	// Microsoft missing oid
+	idMissingOID := UserIdentity{
+		ProviderID: MicrosoftProviderID,
+		TenantID:   "tenant-abc",
+	}
+	if _, err := idMissingOID.StableSubject(); err == nil {
+		t.Error("expected error for missing oid, got nil")
+	}
+
+	// Other provider (e.g. google)
+	idGoogle := UserIdentity{
+		ProviderID: "google",
+		Subject:    "google-sub-456",
+	}
+	subGoogle, err := idGoogle.StableSubject()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subGoogle != "google-sub-456" {
+		t.Errorf("got %q, want google-sub-456", subGoogle)
+	}
+
+	// Other provider missing subject
+	idEmpty := UserIdentity{
+		ProviderID: "google",
+	}
+	if _, err := idEmpty.StableSubject(); err == nil {
+		t.Error("expected error for empty subject, got nil")
+	}
+}
+
+func TestAuthMiddleware_MicrosoftEmailVerification(t *testing.T) {
+	clientID := "ms-client-id"
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	sigB64 := base64.RawURLEncoding.EncodeToString([]byte("sig"))
+
+	testCases := []struct {
+		name         string
+		claims       map[string]interface{}
+		wantEmail    string
+		wantVerified bool
+		wantTenantID string
+		wantObjectID string
+	}{
+		{
+			name: "consumer tenant with preferred_username (no email)",
+			claims: map[string]interface{}{
+				"tid":                MicrosoftConsumerTenantID,
+				"oid":                "oid-consumer-1",
+				"preferred_username": "consumer@outlook.com",
 			},
+			wantEmail:    "consumer@outlook.com",
+			wantVerified: true,
+			wantTenantID: MicrosoftConsumerTenantID,
+			wantObjectID: "oid-consumer-1",
+		},
+		{
+			name: "consumer tenant with email claim",
+			claims: map[string]interface{}{
+				"tid":   MicrosoftConsumerTenantID,
+				"oid":   "oid-consumer-2",
+				"email": "user@live.com",
+			},
+			wantEmail:    "user@live.com",
+			wantVerified: true,
+			wantTenantID: MicrosoftConsumerTenantID,
+			wantObjectID: "oid-consumer-2",
+		},
+		{
+			name: "work tenant with preferred_username only (no email claim)",
+			claims: map[string]interface{}{
+				"tid":                "work-tenant-id",
+				"oid":                "oid-work-1",
+				"preferred_username": "alice@corp.com",
+			},
+			wantEmail:    "",
+			wantVerified: false,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-1",
+		},
+		{
+			name: "work tenant with email and xms_edov true (bool)",
+			claims: map[string]interface{}{
+				"tid":      "work-tenant-id",
+				"oid":      "oid-work-2",
+				"email":    "alice@corp.com",
+				"xms_edov": true,
+			},
+			wantEmail:    "alice@corp.com",
+			wantVerified: true,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-2",
+		},
+		{
+			name: "work tenant with email and xms_edov string true",
+			claims: map[string]interface{}{
+				"tid":      "work-tenant-id",
+				"oid":      "oid-work-3",
+				"email":    "alice@corp.com",
+				"xms_edov": "true",
+			},
+			wantEmail:    "alice@corp.com",
+			wantVerified: true,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-3",
+		},
+		{
+			name: "work tenant with email and xms_edov string 1",
+			claims: map[string]interface{}{
+				"tid":      "work-tenant-id",
+				"oid":      "oid-work-4",
+				"email":    "alice@corp.com",
+				"xms_edov": "1",
+			},
+			wantEmail:    "alice@corp.com",
+			wantVerified: true,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-4",
+		},
+		{
+			name: "work tenant with email but without xms_edov",
+			claims: map[string]interface{}{
+				"tid":   "work-tenant-id",
+				"oid":   "oid-work-5",
+				"email": "attacker@victim.com",
+			},
+			wantEmail:    "attacker@victim.com",
+			wantVerified: false,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-5",
+		},
+		{
+			name: "work tenant with email and xms_edov false",
+			claims: map[string]interface{}{
+				"tid":      "work-tenant-id",
+				"oid":      "oid-work-6",
+				"email":    "attacker@victim.com",
+				"xms_edov": false,
+			},
+			wantEmail:    "attacker@victim.com",
+			wantVerified: false,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-6",
+		},
+		{
+			name: "work tenant with explicit email_verified true is ignored without xms_edov",
+			claims: map[string]interface{}{
+				"tid":            "work-tenant-id",
+				"oid":            "oid-work-7",
+				"email":          "user@example.com",
+				"email_verified": true,
+			},
+			wantEmail:    "user@example.com",
+			wantVerified: false,
+			wantTenantID: "work-tenant-id",
+			wantObjectID: "oid-work-7",
+		},
+		{
+			name: "consumer tenant with explicit email_verified false is honored",
+			claims: map[string]interface{}{
+				"tid":            MicrosoftConsumerTenantID,
+				"oid":            "oid-consumer-3",
+				"email":          "consumer@outlook.com",
+				"email_verified": false,
+			},
+			wantEmail:    "consumer@outlook.com",
+			wantVerified: false,
+			wantTenantID: MicrosoftConsumerTenantID,
+			wantObjectID: "oid-consumer-3",
 		},
 	}
 
-	var capturedID UserIdentity
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedID, _ = GetUserIdentity(r.Context())
-		w.WriteHeader(http.StatusOK)
-	})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := "https://login.microsoftonline.com/test-tenant/v2.0"
+			m := map[string]interface{}{
+				"iss": issuer,
+				"sub": "sub-test",
+				"aud": clientID,
+				"exp": time.Now().Add(time.Hour).Unix(),
+				"iat": time.Now().Unix(),
+			}
+			for k, v := range tc.claims {
+				m[k] = v
+			}
+			jwtPayload, _ := json.Marshal(m)
 
-	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
-	payloadB64 := base64.RawURLEncoding.EncodeToString(jwtPayload)
-	sigB64 := base64.RawURLEncoding.EncodeToString([]byte("sig"))
-	testJWT := headerB64 + "." + payloadB64 + "." + sigB64
+			verifier := createTestVerifier(issuer, clientID, jwtPayload)
+			registry := &OIDCRegistry{
+				Providers: []RegisteredProvider{
+					{
+						Config:   AuthProviderConfig{ID: "microsoft", Issuer: issuer, ClientID: clientID},
+						Verifier: verifier,
+					},
+				},
+			}
 
-	req := httptest.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer "+testJWT)
-	rec := httptest.NewRecorder()
+			var capturedID UserIdentity
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedID, _ = GetUserIdentity(r.Context())
+				w.WriteHeader(http.StatusOK)
+			})
 
-	AuthMiddleware(registry, nil, nil)(handler).ServeHTTP(rec, req)
+			testJWT := headerB64 + "." + base64.RawURLEncoding.EncodeToString(jwtPayload) + "." + sigB64
+			req := httptest.NewRequest("GET", "/protected", nil)
+			req.Header.Set("Authorization", "Bearer "+testJWT)
+			rec := httptest.NewRecorder()
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
+			AuthMiddleware(registry, nil, nil)(handler).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", rec.Code)
+			}
+			if capturedID.Email != tc.wantEmail {
+				t.Errorf("Email = %q, want %q", capturedID.Email, tc.wantEmail)
+			}
+			if capturedID.EmailVerified != tc.wantVerified {
+				t.Errorf("EmailVerified = %v, want %v", capturedID.EmailVerified, tc.wantVerified)
+			}
+			if capturedID.TenantID != tc.wantTenantID {
+				t.Errorf("TenantID = %q, want %q", capturedID.TenantID, tc.wantTenantID)
+			}
+			if capturedID.ObjectID != tc.wantObjectID {
+				t.Errorf("ObjectID = %q, want %q", capturedID.ObjectID, tc.wantObjectID)
+			}
+		})
 	}
-	if capturedID.Email != "john.doe@company.com" {
-		t.Errorf("expected email from preferred_username, got %s", capturedID.Email)
+}
+
+func TestUserIdentity_HelpersAndSessionInfo(t *testing.T) {
+	msConsumer := UserIdentity{
+		ProviderID: ProviderMicrosoft,
+		TenantID:   MicrosoftConsumerTenantID,
+		ObjectID:   "oid-123",
 	}
-	if !capturedID.EmailVerified {
-		t.Errorf("expected emailVerified true for microsoft provider")
+	if msConsumer.GetTenantID() != MicrosoftConsumerTenantID {
+		t.Errorf("expected tenant ID %s, got %s", MicrosoftConsumerTenantID, msConsumer.GetTenantID())
+	}
+	if msConsumer.GetObjectID() != "oid-123" {
+		t.Errorf("expected object ID oid-123, got %s", msConsumer.GetObjectID())
+	}
+	if msConsumer.AccountType() != AccountTypePersonal {
+		t.Errorf("expected personal account type, got %s", msConsumer.AccountType())
+	}
+	if AccountTypeForIdentity(msConsumer) != AccountTypePersonal {
+		t.Errorf("expected personal from AccountTypeForIdentity, got %s", AccountTypeForIdentity(msConsumer))
+	}
+
+	msWork := UserIdentity{
+		ProviderID: ProviderMicrosoft,
+		Claims: map[string]interface{}{
+			ClaimTenantID: "corp-tenant-id",
+			ClaimObjectID: "corp-oid-456",
+		},
+	}
+	if msWork.GetTenantID() != "corp-tenant-id" {
+		t.Errorf("expected tenant ID corp-tenant-id, got %s", msWork.GetTenantID())
+	}
+	if msWork.GetObjectID() != "corp-oid-456" {
+		t.Errorf("expected object ID corp-oid-456, got %s", msWork.GetObjectID())
+	}
+	if msWork.AccountType() != AccountTypeWork {
+		t.Errorf("expected work account type, got %s", msWork.AccountType())
+	}
+
+	google := UserIdentity{
+		ProviderID: ProviderGoogle,
+		Subject:    "google-sub",
+	}
+	if google.AccountType() != AccountTypeNA {
+		t.Errorf("expected n.a. account type for google, got %s", google.AccountType())
+	}
+
+	ctx := context.Background()
+	if _, ok := GetSessionInfo(ctx); ok {
+		t.Error("expected false for missing SessionInfo")
+	}
+	ctx = WithSessionInfo(ctx, SessionInfo{Provider: "microsoft", AccountType: "personal"})
+	info, ok := GetSessionInfo(ctx)
+	if !ok {
+		t.Fatal("expected true for GetSessionInfo")
+	}
+	if info.Provider != "microsoft" || info.AccountType != "personal" {
+		t.Errorf("unexpected SessionInfo: %+v", info)
 	}
 }

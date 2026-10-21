@@ -59,43 +59,14 @@ func AuthMiddleware(registry *OIDCRegistry, resolver IdentityResolver, logger *s
 				return
 			}
 
-			var claims struct {
-				Email             string `json:"email"`
-				PreferredUsername string `json:"preferred_username"`
-				EmailVerified     *bool  `json:"email_verified"`
-				Name              string `json:"name"`
-			}
-			if err := verifiedToken.Claims(&claims); err != nil {
+			var rawClaims map[string]interface{}
+			if err := verifiedToken.Claims(&rawClaims); err != nil {
 				logger.ErrorContext(r.Context(), "Failed to parse claims from ID token", "error", err)
 				http.Error(w, "Unauthorized: Invalid Claims", http.StatusUnauthorized)
 				return
 			}
 
-			var rawClaims map[string]interface{}
-			_ = verifiedToken.Claims(&rawClaims)
-
-			email := claims.Email
-			if email == "" && strings.Contains(claims.PreferredUsername, "@") {
-				email = claims.PreferredUsername
-			}
-
-			emailVerified := false
-			if claims.EmailVerified != nil {
-				emailVerified = *claims.EmailVerified
-			} else if matchedProvider.Config.ID == "microsoft" && email != "" {
-				// Microsoft Entra ID validates the email/preferred_username during account verification
-				emailVerified = true
-			}
-
-			identity := UserIdentity{
-				ProviderID:    matchedProvider.Config.ID,
-				Subject:       verifiedToken.Subject,
-				Email:         email,
-				EmailVerified: emailVerified,
-				Name:          claims.Name,
-				Issuer:        verifiedToken.Issuer,
-				Claims:        rawClaims,
-			}
+			identity := IdentityFromClaims(matchedProvider.Config.ID, verifiedToken.Issuer, verifiedToken.Subject, rawClaims)
 
 			ctx := r.Context()
 			ctx = WithUserIdentity(ctx, identity)
