@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"encoding/json"
+	"log/slog"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/tingdahl/goutils/storage"
 )
 
 // DefaultMaxRequestBodySize limits incoming request bodies to 4 MB to prevent memory exhaustion / DoS.
@@ -37,6 +39,39 @@ func WriteSignedURLResponse(w http.ResponseWriter, url string) {
 	SetNoCacheHeaders(w)
 	w.Header().Set(HeaderContentType, ContentTypeJSONUTF8)
 	_ = json.NewEncoder(w).Encode(SignedURLResponse{URL: url})
+}
+
+// DefaultSignedURLValiditySeconds is the standard link validity duration (60 seconds).
+const DefaultSignedURLValiditySeconds = 60
+
+// ServeSignedURL generates a presigned GET URL for the specified storage object using client
+// (or initializes one via storage.NewStorageClient if client is nil), and writes the standard
+// JSON response {"url": "..."} with no-cache headers.
+// If validitySeconds <= 0, DefaultSignedURLValiditySeconds is used.
+func ServeSignedURL(w http.ResponseWriter, r *http.Request, client storage.StorageClient, objectName string, validitySeconds int) error {
+	if validitySeconds <= 0 {
+		validitySeconds = DefaultSignedURLValiditySeconds
+	}
+
+	if client == nil {
+		var err error
+		client, err = storage.NewStorageClient()
+		if err != nil {
+			slog.ErrorContext(r.Context(), "Failed to initialize storage client", "error", err)
+			http.Error(w, "Storage unavailable", http.StatusInternalServerError)
+			return err
+		}
+	}
+
+	url, err := client.GetObjectLink(r.Context(), objectName, validitySeconds, "")
+	if err != nil {
+		slog.ErrorContext(r.Context(), "Failed to generate signed download link", "error", err, "object", objectName)
+		http.Error(w, "Failed to get download link", http.StatusInternalServerError)
+		return err
+	}
+
+	WriteSignedURLResponse(w, url)
+	return nil
 }
 
 // WriteJSONError writes a JSON error response {"error": "..."} with the given status code and sets Content-Type.
@@ -117,6 +152,46 @@ func GetPositiveInt64Param(r *http.Request, name string) (int64, error) {
 	}
 	if val <= 0 {
 		return 0, fmt.Errorf("route parameter %q must be greater than 0", name)
+	}
+	return val, nil
+}
+
+// GetInt32Param extracts a route parameter as an int32.
+// If missing or not a valid int32, it returns an error.
+func GetInt32Param(r *http.Request, name string) (int32, error) {
+	valStr := strings.TrimSpace(GetRouteParam(r, name))
+	if valStr == "" {
+		return 0, fmt.Errorf("missing route parameter %q", name)
+	}
+	val, err := strconv.ParseInt(valStr, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer route parameter %q: %w", name, err)
+	}
+	return int32(val), nil
+}
+
+// GetPositiveInt32Param extracts a route parameter and verifies it is a strictly positive int32 (> 0).
+func GetPositiveInt32Param(r *http.Request, name string) (int32, error) {
+	val, err := GetInt32Param(r, name)
+	if err != nil {
+		return 0, err
+	}
+	if val <= 0 {
+		return 0, fmt.Errorf("route parameter %q must be greater than 0", name)
+	}
+	return val, nil
+}
+
+// GetIntParam extracts a route parameter as a standard int.
+// If missing or not a valid integer, it returns an error.
+func GetIntParam(r *http.Request, name string) (int, error) {
+	valStr := strings.TrimSpace(GetRouteParam(r, name))
+	if valStr == "" {
+		return 0, fmt.Errorf("missing route parameter %q", name)
+	}
+	val, err := strconv.Atoi(valStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer route parameter %q: %w", name, err)
 	}
 	return val, nil
 }

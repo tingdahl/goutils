@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/tingdahl/goutils/storage"
 )
 
 func TestWriteJSONError(t *testing.T) {
@@ -97,6 +98,22 @@ func TestGetRouteParam(t *testing.T) {
 		t.Error("Expected error for bad int in GetInt64Param")
 	}
 
+	// 2b. GetInt32Param and GetIntParam
+	id32, err := GetInt32Param(req, "id")
+	if err != nil || id32 != 12345 {
+		t.Errorf("GetInt32Param failed: val=%d, err=%v", id32, err)
+	}
+
+	idInt, err := GetIntParam(req, "id")
+	if err != nil || idInt != 12345 {
+		t.Errorf("GetIntParam failed: val=%d, err=%v", idInt, err)
+	}
+
+	posID32, err := GetPositiveInt32Param(req, "id")
+	if err != nil || posID32 != 12345 {
+		t.Errorf("GetPositiveInt32Param failed: val=%d, err=%v", posID32, err)
+	}
+
 	// 6. Missing param fails
 	_, err = GetInt64Param(req, "missing")
 	if err == nil {
@@ -125,6 +142,28 @@ func TestWriteSignedURLResponse(t *testing.T) {
 	}
 	if resp.URL != url {
 		t.Errorf("Expected URL %q, got %q", url, resp.URL)
+	}
+}
+
+func TestServeSignedURL(t *testing.T) {
+	mockStorage := storage.NewMockStorageClient()
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	err := ServeSignedURL(rr, req, mockStorage, "company/1/file.pdf", 60)
+	if err != nil {
+		t.Fatalf("ServeSignedURL returned unexpected error: %v", err)
+	}
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
+	var resp SignedURLResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse JSON response: %v", err)
+	}
+	if !strings.Contains(resp.URL, "company/1/file.pdf") {
+		t.Errorf("Expected URL containing company/1/file.pdf, got %s", resp.URL)
 	}
 }
 
