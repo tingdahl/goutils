@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	gcpcloud "github.com/tingdahl/goutils/cloud/gcp"
 	"github.com/tingdahl/goutils/config"
 	"github.com/tingdahl/goutils/storage"
 
@@ -26,15 +28,26 @@ type GoogleStorageClient struct {
 }
 
 // Init configures the storage package constructor to instantiate a GoogleStorageClient after validating required environment variables.
+func init() {
+	storage.RegisterDriver("gcs", Init)
+	storage.RegisterDriver("gcp", Init)
+}
+
 func Init() error {
-	for _, key := range []string{
-		"GCS_BUCKET",
-		"GOOGLE_CLOUD_PROJECT",
-	} {
-		if strings.TrimSpace(config.GetConfigString(key)) == "" {
-			return fmt.Errorf("gcs: %s environment variable must be configured", key)
-		}
+	bucket := strings.TrimSpace(config.GetConfigString("GCS_BUCKET"))
+	if bucket == "" {
+		return fmt.Errorf("gcs: GCS_BUCKET environment variable must be configured")
 	}
+
+	project := strings.TrimSpace(config.GetConfigString("GOOGLE_CLOUD_PROJECT"))
+	if project == "" {
+		detected, err := gcpcloud.DetermineProjectID()
+		if err != nil {
+			return fmt.Errorf("gcs: GOOGLE_CLOUD_PROJECT not configured and could not be determined: %w", err)
+		}
+		os.Setenv("GOOGLE_CLOUD_PROJECT", detected)
+	}
+
 	storage.SetStorageConstructor(NewGoogleStorageClient)
 	return nil
 }

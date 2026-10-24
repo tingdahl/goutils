@@ -9,16 +9,25 @@ import (
 )
 
 func TestGCSInit(t *testing.T) {
-	// Missing required env variables should fail
+	// Missing required GCS_BUCKET should fail
 	t.Setenv("GCS_BUCKET", "")
 	if err := Init(); err == nil {
 		t.Fatal("expected Init to fail when required env variables are missing, got nil")
 	}
 
+	// Test fallback to DetermineProjectID when GOOGLE_CLOUD_PROJECT is empty but GCP_PROJECT is set
 	t.Setenv("GCS_BUCKET", "test-bucket")
-	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
+	t.Setenv("GCP_PROJECT", "fallback-project")
 
 	err := Init()
+	if err != nil {
+		t.Fatalf("Init with fallback project ID failed: %v", err)
+	}
+
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+
+	err = Init()
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}

@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/tingdahl/goutils/config"
 )
 
 // Standard MIME content types
@@ -129,4 +134,94 @@ func CheckHealth(ctx context.Context) error {
 		return errors.New("storage client is nil")
 	}
 	return nil
+}
+
+// DriverInit is the function signature for storage driver initializers.
+type DriverInit func() error
+
+var (
+	driversMu         sync.RWMutex
+	registeredDrivers = make(map[string]DriverInit)
+)
+
+// RegisterDriver registers a storage driver by name (case-insensitive).
+func RegisterDriver(name string, initFn DriverInit) {
+	driversMu.Lock()
+	defer driversMu.Unlock()
+	registeredDrivers[strings.ToLower(name)] = initFn
+}
+
+// GetDriver returns the registered DriverInit for the given name if present.
+func GetDriver(name string) (DriverInit, bool) {
+	driversMu.RLock()
+	defer driversMu.RUnlock()
+	fn, ok := registeredDrivers[strings.ToLower(name)]
+	return fn, ok
+}
+
+// AvailableDrivers returns a sorted list of registered storage driver names.
+func AvailableDrivers() []string {
+	driversMu.RLock()
+	defer driversMu.RUnlock()
+	var names []string
+	for name := range registeredDrivers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// InitDriver initializes the specified storage driver by name.
+func InitDriver(name string) error {
+	fn, ok := GetDriver(name)
+	if !ok {
+		return fmt.Errorf("storage driver %q is not compiled into this binary (available in this build: %v)", name, AvailableDrivers())
+	}
+	return fn()
+}
+
+// InitFromEnv initializes the storage driver specified by environment variables
+// (checked in order: STORAGE_PROVIDER, STORAGE_BACKEND, PUBLIC_CLOUD).
+// If no environment variable is set and only one distinct driver is available, it defaults to it.
+func InitFromEnv() error {
+	drivers := AvailableDrivers()
+	if len(drivers) == 0 {
+		return errors.New("no storage driver compiled into this binary")
+	}
+
+	var providerName string
+	for _, key := range []string{"STORAGE_PROVIDER", "STORAGE_BACKEND", "PUBLIC_CLOUD"} {
+		if val := strings.TrimSpace(config.GetConfigString(key)); val != "" {
+			providerName = val
+			break
+		}
+	}
+
+	if providerName == "" {
+		if len(drivers) == 1 {
+			providerName = drivers[0]
+			} else {
+			// Check if all registered drivers point to the same init function (aliases like gcp/gcs)
+			driversMu.RLock()
+			var firstFn DriverInit
+			same := true
+			for _, fn := range registeredDrivers {
+				if firstFn == nil {
+					firstFn = fn
+				} else if reflect.ValueOf(firstFn).Pointer() != reflect.ValueOf(fn).Pointer() {
+					same = false
+					break
+				}
+			}
+			driversMu.RUnlock()
+
+			if same && len(drivers) > 0 {
+				providerName = drivers[0]
+					} else {
+				return fmt.Errorf("storage driver must be configured via STORAGE_PROVIDER, STORAGE_BACKEND, or PUBLIC_CLOUD (available drivers in this build: %v)", drivers)
+			}
+		}
+	}
+
+	return InitDriver(providerName)
 }

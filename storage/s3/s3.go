@@ -48,6 +48,10 @@ func getVal(opts map[string]string, key string) string {
 }
 
 // Init registers NewS3StorageClient as the constructor in storage after validating required environment variables.
+func init() {
+	storage.RegisterDriver("s3", Init)
+}
+
 func Init() error {
 	for _, key := range []string{
 		EnvS3Bucket,

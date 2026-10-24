@@ -270,3 +270,87 @@ func TestMockStorageClient_Comprehensive(t *testing.T) {
 		t.Fatalf("expected nil error after delete, got %v", err)
 	}
 }
+
+func TestStorageDriverRegistry(t *testing.T) {
+	// Clean slate for test
+	driversMu.Lock()
+	savedDrivers := registeredDrivers
+	registeredDrivers = make(map[string]DriverInit)
+	driversMu.Unlock()
+	defer func() {
+		driversMu.Lock()
+		registeredDrivers = savedDrivers
+		driversMu.Unlock()
+	}()
+
+	// No drivers registered
+	if len(AvailableDrivers()) != 0 {
+		t.Fatalf("expected 0 drivers, got %d", len(AvailableDrivers()))
+	}
+	if err := InitDriver("nonexistent"); err == nil {
+		t.Fatal("expected error initializing nonexistent driver")
+	}
+	if err := InitFromEnv(); err == nil {
+		t.Fatal("expected error from InitFromEnv with no drivers")
+	}
+
+	// Register test driver
+	var initCalled bool
+	RegisterDriver("mock", func() error {
+		initCalled = true
+		return nil
+	})
+
+	if _, ok := GetDriver("MOCK"); !ok {
+		t.Fatal("expected case-insensitive driver lookup to succeed")
+	}
+
+	drivers := AvailableDrivers()
+	if len(drivers) != 1 || drivers[0] != "mock" {
+		t.Fatalf("expected [mock], got %v", drivers)
+	}
+
+	// Single driver auto-default when no env set
+	t.Setenv("STORAGE_PROVIDER", "")
+	t.Setenv("STORAGE_BACKEND", "")
+	t.Setenv("PUBLIC_CLOUD", "")
+
+	initCalled = false
+	if err := InitFromEnv(); err != nil {
+		t.Fatalf("InitFromEnv failed for single driver: %v", err)
+	}
+	if !initCalled {
+		t.Fatal("expected single driver to be auto-initialized")
+	}
+
+	// Register second driver
+	RegisterDriver("secondary", func() error {
+		return nil
+	})
+
+	// Ambiguous without env var
+	if err := InitFromEnv(); err == nil {
+		t.Fatal("expected error when multiple drivers available but none selected in env")
+	}
+
+	// Selected via STORAGE_PROVIDER
+	t.Setenv("STORAGE_PROVIDER", "mock")
+	initCalled = false
+	if err := InitFromEnv(); err != nil {
+		t.Fatalf("InitFromEnv failed with STORAGE_PROVIDER: %v", err)
+	}
+	if !initCalled {
+		t.Fatal("expected mock driver to be initialized")
+	}
+
+	// Selected via PUBLIC_CLOUD
+	t.Setenv("STORAGE_PROVIDER", "")
+	t.Setenv("PUBLIC_CLOUD", "mock")
+	initCalled = false
+	if err := InitFromEnv(); err != nil {
+		t.Fatalf("InitFromEnv failed with PUBLIC_CLOUD: %v", err)
+	}
+	if !initCalled {
+		t.Fatal("expected mock driver to be initialized")
+	}
+}
