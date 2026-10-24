@@ -47,8 +47,19 @@ func getVal(opts map[string]string, key string) string {
 	return config.GetConfigString(key)
 }
 
-// Init registers NewS3StorageClient as the constructor in storage.
+// Init registers NewS3StorageClient as the constructor in storage after validating required environment variables.
 func Init() error {
+	for _, key := range []string{
+		EnvS3Bucket,
+		EnvS3Region,
+		EnvS3Endpoint,
+		EnvAWSAccessKeyID,
+		EnvAWSSecretAccessKey,
+	} {
+		if strings.TrimSpace(config.GetConfigString(key)) == "" {
+			return fmt.Errorf("s3: %s environment variable must be configured", key)
+		}
+	}
 	storage.SetStorageConstructor(NewS3StorageClient)
 	return nil
 }

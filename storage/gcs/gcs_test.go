@@ -9,6 +9,15 @@ import (
 )
 
 func TestGCSInit(t *testing.T) {
+	// Missing required env variables should fail
+	t.Setenv("GCS_BUCKET", "")
+	if err := Init(); err == nil {
+		t.Fatal("expected Init to fail when required env variables are missing, got nil")
+	}
+
+	t.Setenv("GCS_BUCKET", "test-bucket")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+
 	err := Init()
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)

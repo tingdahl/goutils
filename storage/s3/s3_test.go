@@ -15,6 +15,19 @@ import (
 )
 
 func TestS3Init(t *testing.T) {
+	// Missing required env variables should fail
+	t.Setenv(EnvS3Bucket, "")
+	if err := Init(); err == nil {
+		t.Fatal("expected Init to fail when required env variables are missing, got nil")
+	}
+
+	// Set required S3 configuration
+	t.Setenv(EnvS3Bucket, "test-bucket")
+	t.Setenv(EnvS3Region, "eu-west-1")
+	t.Setenv(EnvS3Endpoint, "https://s3.eu-west-1.amazonaws.com")
+	t.Setenv(EnvAWSAccessKeyID, "test-key-id")
+	t.Setenv(EnvAWSSecretAccessKey, "test-secret-key")
+
 	err := Init()
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)

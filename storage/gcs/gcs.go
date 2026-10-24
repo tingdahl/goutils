@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tingdahl/goutils/config"
@@ -24,8 +25,16 @@ type GoogleStorageClient struct {
 	bucket string
 }
 
-// Init configures the storage package constructor to instantiate a GoogleStorageClient.
+// Init configures the storage package constructor to instantiate a GoogleStorageClient after validating required environment variables.
 func Init() error {
+	for _, key := range []string{
+		"GCS_BUCKET",
+		"GOOGLE_CLOUD_PROJECT",
+	} {
+		if strings.TrimSpace(config.GetConfigString(key)) == "" {
+			return fmt.Errorf("gcs: %s environment variable must be configured", key)
+		}
+	}
 	storage.SetStorageConstructor(NewGoogleStorageClient)
 	return nil
 }
