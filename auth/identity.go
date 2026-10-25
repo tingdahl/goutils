@@ -14,7 +14,7 @@ const (
 
 	AccountTypePersonal = "personal"
 	AccountTypeWork     = "work"
-	AccountTypeNA       = "n.a."
+	AccountTypeNA       = ""
 
 	// MicrosoftConsumerTenantID is the tenant ID of personal Microsoft accounts (MSA).
 	MicrosoftConsumerTenantID = "9188040d-6c67-4c5b-b112-36a304b66dad"
@@ -57,6 +57,11 @@ func (u UserIdentity) StableSubject() (string, error) {
 	return sub, nil
 }
 
+// IsPersonalMicrosoftAccount returns true if tenantID matches the personal Microsoft consumer tenant.
+func IsPersonalMicrosoftAccount(tenantID string) bool {
+	return strings.EqualFold(strings.TrimSpace(tenantID), MicrosoftConsumerTenantID)
+}
+
 // GetTenantID extracts the tenant ID from the identity or its claims.
 func (u UserIdentity) GetTenantID() string {
 	if u.TenantID != "" {
@@ -88,7 +93,7 @@ func (u UserIdentity) AccountType() string {
 		}
 		return AccountTypeWork
 	}
-	return AccountTypeNA
+	return ""
 }
 
 // GetTenantID extracts the tenant ID from the identity or its claims.
@@ -115,8 +120,8 @@ type sessionInfoKey struct{}
 
 // SessionInfo holds metadata about an authenticated user session (such as provider and account type).
 type SessionInfo struct {
-	Provider    string
-	AccountType string
+	Provider string
+	TenantID string
 }
 
 // WithSessionInfo injects SessionInfo into context.

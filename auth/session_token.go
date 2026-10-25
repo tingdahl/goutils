@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tingdahl/goutils/jwt"
-	"github.com/tingdahl/goutils/telemetry"
 )
 
 const (
@@ -29,28 +28,15 @@ const (
 )
 
 // UserSessionClaims defines claims embedded in an application session bearer token.
+// The user ID (sub) is the sole identity key; user profile data (email, name, roles) is
+// authoritatively retrieved from the database/storage by the user resolver on each request.
 type UserSessionClaims struct {
-	Typ         string `json:"typ"` // "user_session"
-	Sub         string `json:"sub"` // User ID / UUID
-	Email       string `json:"email,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Provider    string `json:"provider,omitempty"`
-	AccountType string `json:"account_type,omitempty"`
-	Iat         int64  `json:"iat"`
-	Exp         int64  `json:"exp"`
-}
-
-type userSessionClaimsKey struct{}
-
-// WithUserSessionClaims injects UserSessionClaims into the context.
-func WithUserSessionClaims(ctx context.Context, claims *UserSessionClaims) context.Context {
-	return context.WithValue(ctx, userSessionClaimsKey{}, claims)
-}
-
-// GetUserSessionClaims extracts UserSessionClaims from context if present.
-func GetUserSessionClaims(ctx context.Context) (*UserSessionClaims, bool) {
-	claims, ok := ctx.Value(userSessionClaimsKey{}).(*UserSessionClaims)
-	return claims, ok
+	Typ      string `json:"typ"`                 // "user_session"
+	Sub      string `json:"sub"`                 // User ID / UUID
+	Provider string `json:"provider,omitempty"` // e.g. "google", "microsoft"
+	TenantID string `json:"tenant_id,omitempty"`// Raw tenant ID (e.g. Microsoft tid)
+	Iat      int64  `json:"iat"`
+	Exp      int64  `json:"exp"`
 }
 
 // SessionTokenManager manages generation and verification of user session tokens.
@@ -70,29 +56,23 @@ func NewSessionTokenManager(secret string) *SessionTokenManager {
 }
 
 // MintUserSessionToken creates a signed user application session JWT valid for SessionDuration.
-func (tm *SessionTokenManager) MintUserSessionToken(userID, email, name, provider, accountType string) (string, error) {
-	duration := tm.SessionDuration
-	if duration <= 0 {
-		duration = DefaultUserSessionDuration
-	}
-	return tm.MintUserSessionTokenWithTTL(userID, email, name, provider, accountType, duration)
+func (tm *SessionTokenManager) MintUserSessionToken(userID, provider, tenantID string) (string, error) {
+	return tm.MintUserSessionTokenWithTTL(userID, provider, tenantID, tm.SessionDuration)
 }
 
 // MintUserSessionTokenWithTTL creates a signed user session JWT valid for the specified TTL.
-func (tm *SessionTokenManager) MintUserSessionTokenWithTTL(userID, email, name, provider, accountType string, ttl time.Duration) (string, error) {
+func (tm *SessionTokenManager) MintUserSessionTokenWithTTL(userID, provider, tenantID string, ttl time.Duration) (string, error) {
 	if tm.Secret == "" {
 		return "", jwt.ErrMissingSecret
 	}
 	now := time.Now()
 	claims := UserSessionClaims{
-		Typ:         TokenTypUserSession,
-		Sub:         strings.TrimSpace(userID),
-		Email:       strings.TrimSpace(email),
-		Name:        strings.TrimSpace(name),
-		Provider:    strings.TrimSpace(provider),
-		AccountType: strings.TrimSpace(accountType),
-		Iat:         now.Unix(),
-		Exp:         now.Add(ttl).Unix(),
+		Typ:      TokenTypUserSession,
+		Sub:      strings.TrimSpace(userID),
+		Provider: strings.TrimSpace(provider),
+		TenantID: strings.TrimSpace(tenantID),
+		Iat:      now.Unix(),
+		Exp:      now.Add(ttl).Unix(),
 	}
 	return jwt.Sign(claims, tm.Secret)
 }
@@ -115,42 +95,25 @@ func (tm *SessionTokenManager) VerifyUserSessionToken(tokenStr string) (*UserSes
 // BuildSessionRedirect constructs a redirect URL with the session token in the URL fragment (#token=...).
 // Delivering tokens in the hash fragment ensures tokens are never logged in server access logs or leaked via Referer headers.
 func BuildSessionRedirect(targetURL, sessionToken string) string {
-	cleanTarget := targetURL
-	if idx := strings.Index(cleanTarget, "#"); idx != -1 {
-		cleanTarget = cleanTarget[:idx]
-	}
-	return fmt.Sprintf("%s#token=%s", cleanTarget, url.QueryEscape(sessionToken))
+	return fmt.Sprintf("%s#token=%s", targetURL, sessionToken)
 }
 
-// BuildAuthErrorRedirect constructs a redirect URL conveying error codes in query params
-// and identity details (provider, accountType, email) in the URL fragment to prevent log leakage.
-func BuildAuthErrorRedirect(targetURL, errorCode, provider, accountType, email string) string {
-	cleanTarget := targetURL
-	if idx := strings.Index(cleanTarget, "#"); idx != -1 {
-		cleanTarget = cleanTarget[:idx]
-	}
-
-	sep := "?"
-	if strings.Contains(cleanTarget, "?") {
-		sep = "&"
-	}
-	targetWithQuery := fmt.Sprintf("%s%serror=%s", cleanTarget, sep, url.QueryEscape(errorCode))
-
+// BuildAuthErrorRedirect constructs a redirect URL conveying error details strictly in the URL fragment.
+// Conveying error details in the fragment prevents sensitive parameters (such as email, provider, tenant ID)
+// from ever appearing in server access logs, CDN logs, or leaking through Referer headers.
+func BuildAuthErrorRedirect(targetURL, errorCode, provider, tenantID, email string) string {
 	fragParams := url.Values{}
+	fragParams.Set("error", errorCode)
 	if provider != "" {
 		fragParams.Set("error_provider", provider)
 	}
-	if accountType != "" && accountType != AccountTypeNA {
-		fragParams.Set("error_account_type", accountType)
+	if tenantID != "" {
+		fragParams.Set("error_tenant_id", tenantID)
 	}
 	if email != "" {
 		fragParams.Set("error_email", email)
 	}
-
-	if len(fragParams) > 0 {
-		return fmt.Sprintf("%s#%s", targetWithQuery, fragParams.Encode())
-	}
-	return targetWithQuery
+	return fmt.Sprintf("%s#%s", targetURL, fragParams.Encode())
 }
 
 // SessionUserResolver resolves application-specific user data from UserSessionClaims.
@@ -158,19 +121,14 @@ type SessionUserResolver interface {
 	ResolveSessionUser(ctx context.Context, claims *UserSessionClaims) (context.Context, error)
 }
 
-// SessionUserResolverFunc adapter for functions as SessionUserResolver.
-type SessionUserResolverFunc func(ctx context.Context, claims *UserSessionClaims) (context.Context, error)
-
-// ResolveSessionUser invokes the underlying function.
-func (f SessionUserResolverFunc) ResolveSessionUser(ctx context.Context, claims *UserSessionClaims) (context.Context, error) {
-	return f(ctx, claims)
-}
-
 // SessionAuthMiddleware creates HTTP middleware requiring a valid application session token.
 // Supports active rolling renewal via X-Renewed-Token header when the token enters the renewal threshold.
 func SessionAuthMiddleware(tm *SessionTokenManager, resolver SessionUserResolver, logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if resolver == nil {
+		panic("auth: resolver cannot be nil in SessionAuthMiddleware")
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -196,12 +154,8 @@ func SessionAuthMiddleware(tm *SessionTokenManager, resolver SessionUserResolver
 
 			// Active rolling renewal: if token is nearing expiration, issue an updated token
 			remaining := time.Until(time.Unix(claims.Exp, 0))
-			threshold := tm.RenewalThreshold
-			if threshold <= 0 {
-				threshold = DefaultUserRenewalThreshold
-			}
-			if remaining > 0 && remaining <= threshold {
-				renewedToken, err := tm.MintUserSessionToken(claims.Sub, claims.Email, claims.Name, claims.Provider, claims.AccountType)
+			if remaining > 0 && remaining <= tm.RenewalThreshold {
+				renewedToken, err := tm.MintUserSessionToken(claims.Sub, claims.Provider, claims.TenantID)
 				if err == nil {
 					w.Header().Set(HeaderRenewedToken, renewedToken)
 					w.Header().Set("Access-Control-Expose-Headers", HeaderRenewedToken)
@@ -209,24 +163,19 @@ func SessionAuthMiddleware(tm *SessionTokenManager, resolver SessionUserResolver
 			}
 
 			ctx := r.Context()
-			ctx = WithUserSessionClaims(ctx, claims)
 			ctx = WithSessionInfo(ctx, SessionInfo{
-				Provider:    claims.Provider,
-				AccountType: claims.AccountType,
+				Provider: claims.Provider,
+				TenantID: claims.TenantID,
 			})
-			ctx = telemetry.WithUserMetadata(ctx, claims.Sub, claims.Email, claims.Name, claims.Provider, claims.Sub)
 
-			if resolver != nil {
-				enrichedCtx, err := resolver.ResolveSessionUser(ctx, claims)
-				if err != nil {
-					logger.WarnContext(ctx, "Session user resolution failed", "error", err, "user_id", claims.Sub)
-					http.Error(w, "Forbidden: User resolution failed", http.StatusForbidden)
-					return
-				}
-				ctx = enrichedCtx
+			enrichedCtx, err := resolver.ResolveSessionUser(ctx, claims)
+			if err != nil {
+				logger.WarnContext(ctx, "Session user resolution failed", "error", err, "user_id", claims.Sub)
+				http.Error(w, "Forbidden: User resolution failed", http.StatusForbidden)
+				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(enrichedCtx))
 		})
 	}
 }

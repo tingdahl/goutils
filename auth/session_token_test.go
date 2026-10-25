@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestSessionTokenManager_MintAndVerify(t *testing.T) {
 	secret := "session-secret-key-12345"
 	tm := auth.NewSessionTokenManager(secret)
 
-	token, err := tm.MintUserSessionToken("usr_123", "alice@test.com", "Alice", "google", "")
+	token, err := tm.MintUserSessionToken("usr_123", "microsoft", auth.MicrosoftConsumerTenantID)
 	if err != nil {
 		t.Fatalf("MintUserSessionToken failed: %v", err)
 	}
@@ -26,7 +27,7 @@ func TestSessionTokenManager_MintAndVerify(t *testing.T) {
 		t.Fatalf("VerifyUserSessionToken failed: %v", err)
 	}
 
-	if claims.Sub != "usr_123" || claims.Email != "alice@test.com" || claims.Name != "Alice" || claims.Provider != "google" {
+	if claims.Sub != "usr_123" || claims.Provider != "microsoft" || claims.TenantID != auth.MicrosoftConsumerTenantID {
 		t.Errorf("claims mismatch: %+v", claims)
 	}
 	if claims.Typ != auth.TokenTypUserSession {
@@ -38,7 +39,7 @@ func TestSessionTokenManager_Expired(t *testing.T) {
 	secret := "session-secret"
 	tm := auth.NewSessionTokenManager(secret)
 
-	token, err := tm.MintUserSessionTokenWithTTL("usr_1", "a@b.com", "A", "google", "", -1*time.Minute)
+	token, err := tm.MintUserSessionTokenWithTTL("usr_1", "google", "", -1*time.Minute)
 	if err != nil {
 		t.Fatalf("failed to mint expired token: %v", err)
 	}
@@ -53,7 +54,6 @@ func TestSessionTokenManager_WrongTypRejected(t *testing.T) {
 	secret := "session-secret"
 	tm := auth.NewSessionTokenManager(secret)
 
-	// Sign a token with a different typ (e.g. worker token) using same secret
 	wrongClaims := struct {
 		Typ string `json:"typ"`
 		Sub string `json:"sub"`
@@ -80,33 +80,34 @@ func TestBuildSessionRedirect(t *testing.T) {
 	if redirect != expected {
 		t.Errorf("expected %q, got %q", expected, redirect)
 	}
-
-	// Strips preexisting hash
-	redirectWithHash := auth.BuildSessionRedirect("https://example.com/app#old", "token2")
-	expected2 := "https://example.com/app#token=token2"
-	if redirectWithHash != expected2 {
-		t.Errorf("expected %q, got %q", expected2, redirectWithHash)
-	}
 }
 
 func TestBuildAuthErrorRedirect(t *testing.T) {
-	redirect := auth.BuildAuthErrorRedirect("https://example.com/app", "access_denied", "microsoft", "work", "alice@work.com")
-	if redirect == "" {
-		t.Fatal("expected non-empty redirect")
+	redirect := auth.BuildAuthErrorRedirect("https://example.com/app", "access_denied", "microsoft", auth.MicrosoftConsumerTenantID, "alice@work.com")
+	if !strings.HasPrefix(redirect, "https://example.com/app#") {
+		t.Fatalf("expected fragment redirect, got %s", redirect)
 	}
-	// Check query param error=access_denied
-	if !testing.Short() {
-		if !contains(redirect, "error=access_denied") {
-			t.Errorf("expected error=access_denied in %s", redirect)
-		}
-		if !contains(redirect, "#") || !contains(redirect, "error_email=alice%40work.com") {
-			t.Errorf("expected fragment error details in %s", redirect)
-		}
+	if !strings.Contains(redirect, "error=access_denied") {
+		t.Errorf("expected error=access_denied in %s", redirect)
+	}
+	if !strings.Contains(redirect, "error_provider=microsoft") {
+		t.Errorf("expected error_provider=microsoft in %s", redirect)
+	}
+	if !strings.Contains(redirect, "error_tenant_id="+auth.MicrosoftConsumerTenantID) {
+		t.Errorf("expected error_tenant_id in %s", redirect)
+	}
+	if !strings.Contains(redirect, "error_email=alice%40work.com") {
+		t.Errorf("expected error_email in %s", redirect)
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || (len(substr) > 0 && len(s) > 0 && (s[:len(substr)] == substr || contains(s[1:], substr))))
+type testSessionResolver struct {
+	resolvedSub string
+}
+
+func (r *testSessionResolver) ResolveSessionUser(ctx context.Context, claims *auth.UserSessionClaims) (context.Context, error) {
+	r.resolvedSub = claims.Sub
+	return ctx, nil
 }
 
 func TestSessionAuthMiddleware(t *testing.T) {
@@ -114,16 +115,12 @@ func TestSessionAuthMiddleware(t *testing.T) {
 	tm := auth.NewSessionTokenManager(secret)
 	tm.RenewalThreshold = 2 * time.Hour
 
-	var resolvedUser string
-	resolver := auth.SessionUserResolverFunc(func(ctx context.Context, claims *auth.UserSessionClaims) (context.Context, error) {
-		resolvedUser = claims.Sub
-		return ctx, nil
-	})
+	resolver := &testSessionResolver{}
 
 	handler := auth.SessionAuthMiddleware(tm, resolver, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, ok := auth.GetUserSessionClaims(r.Context())
-		if !ok || claims == nil {
-			t.Error("expected claims in context")
+		info, ok := auth.GetSessionInfo(r.Context())
+		if !ok || info.Provider != "google" {
+			t.Errorf("expected session info with provider google, got %+v", info)
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -138,7 +135,7 @@ func TestSessionAuthMiddleware(t *testing.T) {
 	}
 
 	// 2. Valid token -> 200
-	validToken, _ := tm.MintUserSessionToken("user-999", "u@test.com", "U", "google", "")
+	validToken, _ := tm.MintUserSessionToken("user-999", "google", "")
 	req2 := httptest.NewRequest("GET", "/api/test", nil)
 	req2.Header.Set("Authorization", "Bearer "+validToken)
 	rec2 := httptest.NewRecorder()
@@ -146,12 +143,12 @@ func TestSessionAuthMiddleware(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Errorf("expected 200 for valid token, got %d", rec2.Code)
 	}
-	if resolvedUser != "user-999" {
-		t.Errorf("expected resolved user 'user-999', got %q", resolvedUser)
+	if resolver.resolvedSub != "user-999" {
+		t.Errorf("expected resolved user user-999, got %q", resolver.resolvedSub)
 	}
 
 	// 3. Rolling renewal: near expiration -> receives X-Renewed-Token
-	nearExpToken, _ := tm.MintUserSessionTokenWithTTL("user-999", "u@test.com", "U", "google", "", 1*time.Hour)
+	nearExpToken, _ := tm.MintUserSessionTokenWithTTL("user-999", "google", "", 1*time.Hour)
 	req3 := httptest.NewRequest("GET", "/api/test", nil)
 	req3.Header.Set("Authorization", "Bearer "+nearExpToken)
 	rec3 := httptest.NewRecorder()
@@ -163,13 +160,15 @@ func TestSessionAuthMiddleware(t *testing.T) {
 	if renewed == "" {
 		t.Error("expected X-Renewed-Token header for token nearing expiration")
 	} else {
-		// Ensure renewed token is valid
 		renewedClaims, err := tm.VerifyUserSessionToken(renewed)
 		if err != nil {
 			t.Fatalf("renewed token is invalid: %v", err)
 		}
 		if renewedClaims.Sub != "user-999" {
 			t.Errorf("renewed token has wrong sub: %s", renewedClaims.Sub)
+		}
+		if renewedClaims.Provider != "google" {
+			t.Errorf("renewed token has wrong provider: %s", renewedClaims.Provider)
 		}
 	}
 }

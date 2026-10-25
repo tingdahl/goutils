@@ -632,20 +632,23 @@ func TestUserIdentity_HelpersAndSessionInfo(t *testing.T) {
 		ProviderID: ProviderGoogle,
 		Subject:    "google-sub",
 	}
-	if google.AccountType() != AccountTypeNA {
-		t.Errorf("expected n.a. account type for google, got %s", google.AccountType())
+	if google.AccountType() != "" {
+		t.Errorf("expected empty account type for google, got %s", google.AccountType())
 	}
 
 	ctx := context.Background()
 	if _, ok := GetSessionInfo(ctx); ok {
 		t.Error("expected false for missing SessionInfo")
 	}
-	ctx = WithSessionInfo(ctx, SessionInfo{Provider: "microsoft", AccountType: "personal"})
+	ctx = WithSessionInfo(ctx, SessionInfo{Provider: "microsoft", TenantID: MicrosoftConsumerTenantID})
 	info, ok := GetSessionInfo(ctx)
 	if !ok {
 		t.Fatal("expected true for GetSessionInfo")
 	}
-	if info.Provider != "microsoft" || info.AccountType != "personal" {
+	if info.Provider != "microsoft" || info.TenantID != MicrosoftConsumerTenantID {
 		t.Errorf("unexpected SessionInfo: %+v", info)
+	}
+	if !IsPersonalMicrosoftAccount(info.TenantID) {
+		t.Errorf("expected IsPersonalMicrosoftAccount to be true for consumer tenant ID")
 	}
 }
