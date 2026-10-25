@@ -240,6 +240,7 @@ func TestCallbackHandler_ErrorFromIdP(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/test-idp/callback?error=access_denied&error_description=user+canceled", nil)
+	req.SetPathValue("id", "test-idp")
 	w := httptest.NewRecorder()
 	registry.CallbackHandler(nil)(w, req)
 
@@ -268,6 +269,7 @@ func TestCallbackHandler_StateMismatch(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/test-idp/callback?state=state-from-query&code=code123", nil)
+	req.SetPathValue("id", "test-idp")
 	req.AddCookie(&http.Cookie{
 		Name:  "oidc_state_test-idp",
 		Value: "different-state-in-cookie",

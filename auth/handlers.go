@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/tingdahl/goutils/config"
+	"github.com/tingdahl/goutils/httputil"
 	"golang.org/x/oauth2"
 )
 
@@ -68,34 +69,12 @@ func (r *OIDCRegistry) getProvider(req *http.Request) *RegisteredProvider {
 		return nil
 	}
 
-	vars := mux.Vars(req)
-	id := vars["id"]
+	id := httputil.GetRouteParam(req, "id")
 	if id == "" {
-		id = req.URL.Query().Get("provider_id")
-	}
-	if id == "" {
-		id = req.URL.Query().Get("provider")
+		return nil
 	}
 
-	if id != "" {
-		return r.GetProviderByID(id)
-	}
-
-	// Try matching by redirect_path
-	reqPath := req.URL.Path
-	for i := range r.Providers {
-		p := &r.Providers[i]
-		if p.Config.RedirectPath == reqPath {
-			return p
-		}
-	}
-
-	// If no ID was provided and only 1 provider exists, fallback to it
-	if len(r.Providers) == 1 {
-		return &r.Providers[0]
-	}
-
-	return nil
+	return r.GetProviderByID(id)
 }
 
 func (r *OIDCRegistry) getRedirectURI(req *http.Request, p *RegisteredProvider) string {
@@ -471,12 +450,4 @@ func (r *OIDCRegistry) RegisterRoutes(router *mux.Router, opts *AuthRoutesOption
 	// Token proxy route
 	router.HandleFunc(prefix+"/token", tokenHandler).Methods(http.MethodPost)
 
-	// Register specific redirect paths if configured
-	if r != nil {
-		for _, p := range r.Providers {
-			if p.Config.RedirectPath != "" {
-				router.HandleFunc(p.Config.RedirectPath, callbackHandler).Methods(http.MethodGet)
-			}
-		}
-	}
 }
