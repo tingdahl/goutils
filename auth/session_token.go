@@ -34,7 +34,6 @@ type UserSessionClaims struct {
 	Typ      string `json:"typ"`                 // "user_session"
 	Sub      string `json:"sub"`                 // User ID / UUID
 	Provider string `json:"provider,omitempty"` // e.g. "google", "microsoft"
-	TenantID string `json:"tenant_id,omitempty"`// Raw tenant ID (e.g. Microsoft tid)
 	Iat      int64  `json:"iat"`
 	Exp      int64  `json:"exp"`
 }
@@ -56,12 +55,12 @@ func NewSessionTokenManager(secret string) *SessionTokenManager {
 }
 
 // MintUserSessionToken creates a signed user application session JWT valid for SessionDuration.
-func (tm *SessionTokenManager) MintUserSessionToken(userID, provider, tenantID string) (string, error) {
-	return tm.MintUserSessionTokenWithTTL(userID, provider, tenantID, tm.SessionDuration)
+func (tm *SessionTokenManager) MintUserSessionToken(userID, provider string) (string, error) {
+	return tm.MintUserSessionTokenWithTTL(userID, provider, tm.SessionDuration)
 }
 
 // MintUserSessionTokenWithTTL creates a signed user session JWT valid for the specified TTL.
-func (tm *SessionTokenManager) MintUserSessionTokenWithTTL(userID, provider, tenantID string, ttl time.Duration) (string, error) {
+func (tm *SessionTokenManager) MintUserSessionTokenWithTTL(userID, provider string, ttl time.Duration) (string, error) {
 	if tm.Secret == "" {
 		return "", jwt.ErrMissingSecret
 	}
@@ -70,7 +69,6 @@ func (tm *SessionTokenManager) MintUserSessionTokenWithTTL(userID, provider, ten
 		Typ:      TokenTypUserSession,
 		Sub:      strings.TrimSpace(userID),
 		Provider: strings.TrimSpace(provider),
-		TenantID: strings.TrimSpace(tenantID),
 		Iat:      now.Unix(),
 		Exp:      now.Add(ttl).Unix(),
 	}
@@ -99,16 +97,13 @@ func BuildSessionRedirect(targetURL, sessionToken string) string {
 }
 
 // BuildAuthErrorRedirect constructs a redirect URL conveying error details strictly in the URL fragment.
-// Conveying error details in the fragment prevents sensitive parameters (such as email, provider, tenant ID)
+// Conveying error details in the fragment prevents sensitive parameters (such as email, provider)
 // from ever appearing in server access logs, CDN logs, or leaking through Referer headers.
-func BuildAuthErrorRedirect(targetURL, errorCode, provider, tenantID, email string) string {
+func BuildAuthErrorRedirect(targetURL, errorCode, provider, email string) string {
 	fragParams := url.Values{}
 	fragParams.Set("error", errorCode)
 	if provider != "" {
 		fragParams.Set("error_provider", provider)
-	}
-	if tenantID != "" {
-		fragParams.Set("error_tenant_id", tenantID)
 	}
 	if email != "" {
 		fragParams.Set("error_email", email)
@@ -155,7 +150,7 @@ func SessionAuthMiddleware(tm *SessionTokenManager, resolver SessionUserResolver
 			// Active rolling renewal: if token is nearing expiration, issue an updated token
 			remaining := time.Until(time.Unix(claims.Exp, 0))
 			if remaining > 0 && remaining <= tm.RenewalThreshold {
-				renewedToken, err := tm.MintUserSessionToken(claims.Sub, claims.Provider, claims.TenantID)
+				renewedToken, err := tm.MintUserSessionToken(claims.Sub, claims.Provider)
 				if err == nil {
 					w.Header().Set(HeaderRenewedToken, renewedToken)
 					w.Header().Set("Access-Control-Expose-Headers", HeaderRenewedToken)
@@ -165,7 +160,6 @@ func SessionAuthMiddleware(tm *SessionTokenManager, resolver SessionUserResolver
 			ctx := r.Context()
 			ctx = WithSessionInfo(ctx, SessionInfo{
 				Provider: claims.Provider,
-				TenantID: claims.TenantID,
 			})
 
 			enrichedCtx, err := resolver.ResolveSessionUser(ctx, claims)

@@ -12,6 +12,7 @@ const (
 	MicrosoftIssuerPrefix   = "https://login.microsoftonline.com/"
 	MicrosoftIssuerPrefixV1 = "https://sts.windows.net/"
 
+	ClaimSubject                  = "sub"
 	ClaimEmail                    = "email"
 	ClaimEmailVerified            = "email_verified"
 	ClaimName                     = "name"
@@ -132,21 +133,32 @@ func ResolveEmailFromClaims(issuer string, claims map[string]any) (email string,
 
 // IdentityFromClaims builds a UserIdentity from the claims of a cryptographically verified ID token.
 // The email address is chosen by ResolveEmailFromClaims.
+// For Microsoft, the subject is normalized to "tid:oid" at parse time to ensure a stable, unique identity across tenants.
 func IdentityFromClaims(providerID, issuer, subject string, claims map[string]any) UserIdentity {
 	email, verified, _ := ResolveEmailFromClaims(issuer, claims)
 	name, _ := claims[ClaimName].(string)
 	tid, _ := claims[ClaimTenantID].(string)
 	oid, _ := claims[ClaimObjectID].(string)
 
+	tid = strings.TrimSpace(tid)
+	oid = strings.TrimSpace(oid)
+
+	resolvedSubject := strings.TrimSpace(subject)
+	if (providerID == MicrosoftProviderID || providerID == ProviderMicrosoft || IsMicrosoftIssuer(issuer)) && tid != "" && oid != "" {
+		resolvedSubject = tid + ":" + oid
+	}
+
+	if claims != nil {
+		claims[ClaimSubject] = resolvedSubject
+	}
+
 	return UserIdentity{
 		ProviderID:    providerID,
-		Subject:       subject,
+		Subject:       resolvedSubject,
 		Email:         email,
 		EmailVerified: verified,
 		Name:          strings.TrimSpace(name),
 		Issuer:        issuer,
-		TenantID:      strings.TrimSpace(tid),
-		ObjectID:      strings.TrimSpace(oid),
 		Claims:        claims,
 	}
 }

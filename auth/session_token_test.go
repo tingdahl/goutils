@@ -17,7 +17,7 @@ func TestSessionTokenManager_MintAndVerify(t *testing.T) {
 	secret := "session-secret-key-12345"
 	tm := auth.NewSessionTokenManager(secret)
 
-	token, err := tm.MintUserSessionToken("usr_123", "microsoft", auth.MicrosoftConsumerTenantID)
+	token, err := tm.MintUserSessionToken("usr_123", "microsoft")
 	if err != nil {
 		t.Fatalf("MintUserSessionToken failed: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestSessionTokenManager_MintAndVerify(t *testing.T) {
 		t.Fatalf("VerifyUserSessionToken failed: %v", err)
 	}
 
-	if claims.Sub != "usr_123" || claims.Provider != "microsoft" || claims.TenantID != auth.MicrosoftConsumerTenantID {
+	if claims.Sub != "usr_123" || claims.Provider != "microsoft" {
 		t.Errorf("claims mismatch: %+v", claims)
 	}
 	if claims.Typ != auth.TokenTypUserSession {
@@ -39,7 +39,7 @@ func TestSessionTokenManager_Expired(t *testing.T) {
 	secret := "session-secret"
 	tm := auth.NewSessionTokenManager(secret)
 
-	token, err := tm.MintUserSessionTokenWithTTL("usr_1", "google", "", -1*time.Minute)
+	token, err := tm.MintUserSessionTokenWithTTL("usr_1", "google", -1*time.Minute)
 	if err != nil {
 		t.Fatalf("failed to mint expired token: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestBuildSessionRedirect(t *testing.T) {
 }
 
 func TestBuildAuthErrorRedirect(t *testing.T) {
-	redirect := auth.BuildAuthErrorRedirect("https://example.com/app", "access_denied", "microsoft", auth.MicrosoftConsumerTenantID, "alice@work.com")
+	redirect := auth.BuildAuthErrorRedirect("https://example.com/app", "access_denied", "microsoft", "alice@work.com")
 	if !strings.HasPrefix(redirect, "https://example.com/app#") {
 		t.Fatalf("expected fragment redirect, got %s", redirect)
 	}
@@ -92,9 +92,6 @@ func TestBuildAuthErrorRedirect(t *testing.T) {
 	}
 	if !strings.Contains(redirect, "error_provider=microsoft") {
 		t.Errorf("expected error_provider=microsoft in %s", redirect)
-	}
-	if !strings.Contains(redirect, "error_tenant_id="+auth.MicrosoftConsumerTenantID) {
-		t.Errorf("expected error_tenant_id in %s", redirect)
 	}
 	if !strings.Contains(redirect, "error_email=alice%40work.com") {
 		t.Errorf("expected error_email in %s", redirect)
@@ -135,7 +132,7 @@ func TestSessionAuthMiddleware(t *testing.T) {
 	}
 
 	// 2. Valid token -> 200
-	validToken, _ := tm.MintUserSessionToken("user-999", "google", "")
+	validToken, _ := tm.MintUserSessionToken("user-999", "google")
 	req2 := httptest.NewRequest("GET", "/api/test", nil)
 	req2.Header.Set("Authorization", "Bearer "+validToken)
 	rec2 := httptest.NewRecorder()
@@ -148,7 +145,7 @@ func TestSessionAuthMiddleware(t *testing.T) {
 	}
 
 	// 3. Rolling renewal: near expiration -> receives X-Renewed-Token
-	nearExpToken, _ := tm.MintUserSessionTokenWithTTL("user-999", "google", "", 1*time.Hour)
+	nearExpToken, _ := tm.MintUserSessionTokenWithTTL("user-999", "google", 1*time.Hour)
 	req3 := httptest.NewRequest("GET", "/api/test", nil)
 	req3.Header.Set("Authorization", "Bearer "+nearExpToken)
 	rec3 := httptest.NewRecorder()

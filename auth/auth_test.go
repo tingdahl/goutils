@@ -339,13 +339,11 @@ func TestInitOIDCRegistry_Success(t *testing.T) {
 
 
 func TestUserIdentity_StableSubject(t *testing.T) {
-	// Microsoft with tid:oid
-	idMS := UserIdentity{
-		ProviderID: MicrosoftProviderID,
-		Subject:    "ms-sub-123",
-		TenantID:   "tenant-abc",
-		ObjectID:   "oid-xyz",
-	}
+	// Microsoft normalized to tid:oid at parse time
+	idMS := IdentityFromClaims(MicrosoftProviderID, "https://login.microsoftonline.com/tenant-abc/v2.0", "sub-pairwise", map[string]interface{}{
+		ClaimTenantID: "tenant-abc",
+		ClaimObjectID: "oid-xyz",
+	})
 	sub, err := idMS.StableSubject()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -353,30 +351,14 @@ func TestUserIdentity_StableSubject(t *testing.T) {
 	if sub != "tenant-abc:oid-xyz" {
 		t.Errorf("got %q, want tenant-abc:oid-xyz", sub)
 	}
-
-	// Microsoft missing tid
-	idMissingTID := UserIdentity{
-		ProviderID: MicrosoftProviderID,
-		ObjectID:   "oid-xyz",
-	}
-	if _, err := idMissingTID.StableSubject(); err == nil {
-		t.Error("expected error for missing tid, got nil")
+	if idMS.Claims[ClaimSubject] != "tenant-abc:oid-xyz" {
+		t.Errorf("Claims[sub] = %q, want tenant-abc:oid-xyz", idMS.Claims[ClaimSubject])
 	}
 
-	// Microsoft missing oid
-	idMissingOID := UserIdentity{
-		ProviderID: MicrosoftProviderID,
-		TenantID:   "tenant-abc",
-	}
-	if _, err := idMissingOID.StableSubject(); err == nil {
-		t.Error("expected error for missing oid, got nil")
-	}
-
-	// Other provider (e.g. google)
-	idGoogle := UserIdentity{
-		ProviderID: "google",
-		Subject:    "google-sub-456",
-	}
+	// Google provider with standard sub
+	idGoogle := IdentityFromClaims("google", GoogleIssuer, "google-sub-456", map[string]interface{}{
+		ClaimSubject: "google-sub-456",
+	})
 	subGoogle, err := idGoogle.StableSubject()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -384,8 +366,11 @@ func TestUserIdentity_StableSubject(t *testing.T) {
 	if subGoogle != "google-sub-456" {
 		t.Errorf("got %q, want google-sub-456", subGoogle)
 	}
+	if idGoogle.Claims[ClaimSubject] != "google-sub-456" {
+		t.Errorf("Claims[sub] = %q, want google-sub-456", idGoogle.Claims[ClaimSubject])
+	}
 
-	// Other provider missing subject
+	// Identity with empty subject returns error
 	idEmpty := UserIdentity{
 		ProviderID: "google",
 	}
@@ -582,73 +567,59 @@ func TestAuthMiddleware_MicrosoftEmailVerification(t *testing.T) {
 			if capturedID.EmailVerified != tc.wantVerified {
 				t.Errorf("EmailVerified = %v, want %v", capturedID.EmailVerified, tc.wantVerified)
 			}
-			if capturedID.TenantID != tc.wantTenantID {
-				t.Errorf("TenantID = %q, want %q", capturedID.TenantID, tc.wantTenantID)
+			if tid, _ := capturedID.Claims[ClaimTenantID].(string); tid != tc.wantTenantID {
+				t.Errorf("Claims[ClaimTenantID] = %q, want %q", tid, tc.wantTenantID)
 			}
-			if capturedID.ObjectID != tc.wantObjectID {
-				t.Errorf("ObjectID = %q, want %q", capturedID.ObjectID, tc.wantObjectID)
+			if oid, _ := capturedID.Claims[ClaimObjectID].(string); oid != tc.wantObjectID {
+				t.Errorf("Claims[ClaimObjectID] = %q, want %q", oid, tc.wantObjectID)
+			}
+			wantSub := tc.wantTenantID + ":" + tc.wantObjectID
+			if capturedID.Subject != wantSub {
+				t.Errorf("Subject = %q, want %q", capturedID.Subject, wantSub)
 			}
 		})
 	}
 }
 
-func TestUserIdentity_HelpersAndSessionInfo(t *testing.T) {
-	msConsumer := UserIdentity{
-		ProviderID: ProviderMicrosoft,
-		TenantID:   MicrosoftConsumerTenantID,
-		ObjectID:   "oid-123",
+func TestUserIdentity_SubjectAndSessionInfo(t *testing.T) {
+	msParsed := IdentityFromClaims(ProviderMicrosoft, "https://login.microsoftonline.com/tenant-123/v2.0", "sub-ignore", map[string]interface{}{
+		ClaimTenantID: "tenant-123",
+		ClaimObjectID: "oid-456",
+		ClaimEmail:    "user@work.com",
+	})
+	if msParsed.Subject != "tenant-123:oid-456" {
+		t.Errorf("expected Subject tenant-123:oid-456, got %s", msParsed.Subject)
 	}
-	if msConsumer.GetTenantID() != MicrosoftConsumerTenantID {
-		t.Errorf("expected tenant ID %s, got %s", MicrosoftConsumerTenantID, msConsumer.GetTenantID())
+	if tid, _ := msParsed.Claims[ClaimTenantID].(string); tid != "tenant-123" {
+		t.Errorf("expected Claims[tid] tenant-123, got %s", tid)
 	}
-	if msConsumer.GetObjectID() != "oid-123" {
-		t.Errorf("expected object ID oid-123, got %s", msConsumer.GetObjectID())
-	}
-	if msConsumer.AccountType() != AccountTypePersonal {
-		t.Errorf("expected personal account type, got %s", msConsumer.AccountType())
-	}
-	if AccountTypeForIdentity(msConsumer) != AccountTypePersonal {
-		t.Errorf("expected personal from AccountTypeForIdentity, got %s", AccountTypeForIdentity(msConsumer))
+	if oid, _ := msParsed.Claims[ClaimObjectID].(string); oid != "oid-456" {
+		t.Errorf("expected Claims[oid] oid-456, got %s", oid)
 	}
 
-	msWork := UserIdentity{
-		ProviderID: ProviderMicrosoft,
-		Claims: map[string]interface{}{
-			ClaimTenantID: "corp-tenant-id",
-			ClaimObjectID: "corp-oid-456",
-		},
-	}
-	if msWork.GetTenantID() != "corp-tenant-id" {
-		t.Errorf("expected tenant ID corp-tenant-id, got %s", msWork.GetTenantID())
-	}
-	if msWork.GetObjectID() != "corp-oid-456" {
-		t.Errorf("expected object ID corp-oid-456, got %s", msWork.GetObjectID())
-	}
-	if msWork.AccountType() != AccountTypeWork {
-		t.Errorf("expected work account type, got %s", msWork.AccountType())
+	googleParsed := IdentityFromClaims(ProviderGoogle, GoogleIssuer, "google-sub-789", map[string]interface{}{
+		ClaimEmail:         "user@gmail.com",
+		ClaimEmailVerified: true,
+	})
+	if googleParsed.Subject != "google-sub-789" {
+		t.Errorf("expected Subject google-sub-789, got %s", googleParsed.Subject)
 	}
 
-	google := UserIdentity{
-		ProviderID: ProviderGoogle,
-		Subject:    "google-sub",
-	}
-	if google.AccountType() != "" {
-		t.Errorf("expected empty account type for google, got %s", google.AccountType())
+	sub, err := googleParsed.StableSubject()
+	if err != nil || sub != "google-sub-789" {
+		t.Errorf("unexpected StableSubject: %s, %v", sub, err)
 	}
 
 	ctx := context.Background()
 	if _, ok := GetSessionInfo(ctx); ok {
 		t.Error("expected false for missing SessionInfo")
 	}
-	ctx = WithSessionInfo(ctx, SessionInfo{Provider: "microsoft", TenantID: MicrosoftConsumerTenantID})
+	ctx = WithSessionInfo(ctx, SessionInfo{Provider: "microsoft"})
 	info, ok := GetSessionInfo(ctx)
 	if !ok {
 		t.Fatal("expected true for GetSessionInfo")
 	}
-	if info.Provider != "microsoft" || info.TenantID != MicrosoftConsumerTenantID {
+	if info.Provider != "microsoft" {
 		t.Errorf("unexpected SessionInfo: %+v", info)
-	}
-	if !IsPersonalMicrosoftAccount(info.TenantID) {
-		t.Errorf("expected IsPersonalMicrosoftAccount to be true for consumer tenant ID")
 	}
 }
