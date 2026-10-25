@@ -1,0 +1,43 @@
+syntax = "proto3";
+package users;
+option go_package = "github.com/tingdahl/goutils/users";
+
+message UserProtoRow {
+    string id = 1;
+    string email = 2;
+    string name = 3;
+    int64 created_at_unix_ms = 4;
+    int64 updated_at_unix_ms = 5;
+
+    // Key is tenant/company ID (int64), value is user role in that tenant/company (represented as integer).
+    map<int64, int32> tenant_roles = 10;
+
+    // Key is OIDC provider ID (e.g. "google", "microsoft"), value is provider sub ID.
+    map<string, string> identities = 11;
+
+    // Formerly is_site_admin (moved to UserSessionProfileProto)
+    reserved 12;
+    reserved "is_site_admin";
+
+    // Version of Terms and Conditions accepted by user.
+    string tc_accepted_version = 13;
+
+    // Timestamp (unix ms) when user accepted the latest Terms and Conditions.
+    int64 tc_accepted_at_unix_ms = 14;
+
+    // Whether this user has claimed their one-time free trial tenant
+    bool trial_claimed = 15;
+}
+
+message UserSessionProfileProto {
+    UserProtoRow user = 1;
+    string session_provider = 2;
+    string session_account_type = 3;
+    bool is_site_admin = 4;
+}
+
+message UsersProto {
+    int32 schema_minor_version = 1;
+    string last_modified_by_commit = 2;
+    repeated UserProtoRow users = 3;
+}
