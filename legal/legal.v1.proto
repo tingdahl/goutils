@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package legal;
+option go_package = "github.com/tingdahl/goutils/legal";
+
+message TermsInfoProto {
+    string type = 1;
+    string version = 2;
+    string content = 3;
+}
+
+message AcceptTermsRequestProto {
+    string version = 1;
+}
+
+message AcceptTermsResponseProto {
+    bool success = 1;
+    string version = 2;
+    int64 accepted_at_unix_ms = 3;
+}
