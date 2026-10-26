@@ -21,7 +21,7 @@ func TestPublicProviders(t *testing.T) {
 					ID:           "google",
 					Name:         "Google",
 					Icon:         "google",
-					RedirectPath: "/auth/callback/google",
+					RedirectPath: "/custom/callback/google",
 				},
 			},
 			{
@@ -33,16 +33,65 @@ func TestPublicProviders(t *testing.T) {
 		},
 	}
 
+	// Before RegisterRoutes: no defaults are assumed
 	providers := registry.PublicProviders()
 	if len(providers) != 2 {
 		t.Fatalf("expected 2 providers, got %d", len(providers))
 	}
-	if providers[0].ID != "google" || providers[0].RedirectPath != "/auth/callback/google" {
+	if providers[0].ID != "google" || providers[0].RedirectPath != "/custom/callback/google" {
 		t.Errorf("unexpected provider 0: %+v", providers[0])
 	}
-	if providers[1].ID != "microsoft" || providers[1].RedirectPath != "/auth/callback/microsoft" {
-		t.Errorf("unexpected default redirect path for provider 1: %+v", providers[1])
+	if providers[1].ID != "microsoft" || providers[1].RedirectPath != "" {
+		t.Errorf("expected empty redirect path for unconfigured provider 1, got: %s", providers[1].RedirectPath)
 	}
+
+	// After RegisterRoutes: RedirectPath is derived from required PathPrefix
+	router := mux.NewRouter()
+	registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "/api/auth"})
+
+	providersAfter := registry.PublicProviders()
+	if providersAfter[1].RedirectPath != "/api/auth/callback/microsoft" {
+		t.Errorf("expected redirect path /api/auth/callback/microsoft, got: %s", providersAfter[1].RedirectPath)
+	}
+	// Custom RedirectPath is preserved
+	if providersAfter[0].RedirectPath != "/custom/callback/google" {
+		t.Errorf("expected custom redirect path preserved, got: %s", providersAfter[0].RedirectPath)
+	}
+}
+
+func TestRegisterRoutes_RequiresPathPrefix(t *testing.T) {
+	registry := &OIDCRegistry{}
+	router := mux.NewRouter()
+
+	// nil opts must panic
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic when opts is nil")
+			}
+		}()
+		registry.RegisterRoutes(router, nil)
+	}()
+
+	// empty PathPrefix must panic
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic when PathPrefix is empty")
+			}
+		}()
+		registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: ""})
+	}()
+
+	// invalid PathPrefix (no leading slash) must panic
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic when PathPrefix does not start with /")
+			}
+		}()
+		registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "api/auth"})
+	}()
 }
 
 func TestLoginHandler_Unconfigured(t *testing.T) {
@@ -71,7 +120,7 @@ func TestLoginHandler_NotFound(t *testing.T) {
 		},
 	}
 	router := mux.NewRouter()
-	registry.RegisterRoutes(router, nil)
+	registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "/api/auth"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/unknown/login", nil)
 	w := httptest.NewRecorder()
@@ -87,23 +136,51 @@ func TestCallbackHandler_MissingState(t *testing.T) {
 		Providers: []RegisteredProvider{
 			{
 				Config: AuthProviderConfig{
-					ID:           "google",
-					Name:         "Google",
-					ClientID:     "mock-client-id",
-					RedirectPath: "/auth/callback/google",
+					ID:       "google",
+					Name:     "Google",
+					ClientID: "mock-client-id",
 				},
 			},
 		},
 	}
 	router := mux.NewRouter()
-	registry.RegisterRoutes(router, nil)
+	registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "/api/auth"})
 
-	req := httptest.NewRequest(http.MethodGet, "/auth/callback/google", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback/google", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for missing state, got %d", w.Code)
+	}
+}
+
+func TestRegisterRoutes_SetsCallbackPathFromPrefix(t *testing.T) {
+	registry := &OIDCRegistry{
+		Providers: []RegisteredProvider{
+			{
+				Config: AuthProviderConfig{
+					ID:       "google",
+					Name:     "Google",
+					ClientID: "mock-client-id",
+				},
+			},
+		},
+	}
+	router := mux.NewRouter()
+	registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "/api/auth"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback/google", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for missing state on /api/auth/callback/google, got %d", w.Code)
+	}
+
+	redirectURI := registry.getRedirectURI(req, &registry.Providers[0])
+	if !strings.HasSuffix(redirectURI, "/api/auth/callback/google") {
+		t.Fatalf("expected redirect URI to end with /api/auth/callback/google, got %s", redirectURI)
 	}
 }
 
@@ -170,7 +247,6 @@ func TestLoginHandler_SuccessRedirect(t *testing.T) {
 					Name:         "Test IDP",
 					ClientID:     "test-client-123",
 					ClientSecret: "test-secret-456",
-					RedirectPath: "/auth/callback/test-idp",
 				},
 				Provider: provider,
 			},
@@ -179,6 +255,7 @@ func TestLoginHandler_SuccessRedirect(t *testing.T) {
 
 	router := mux.NewRouter()
 	registry.RegisterRoutes(router, &AuthRoutesOptions{
+		PathPrefix:      "/api/auth",
 		DefaultReturnTo: "/dashboard",
 	})
 
@@ -200,7 +277,7 @@ func TestLoginHandler_SuccessRedirect(t *testing.T) {
 	if !strings.Contains(loc, "client_id=test-client-123") {
 		t.Errorf("missing client_id in auth URL: %s", loc)
 	}
-	if !strings.Contains(loc, "redirect_uri=https%3A%2F%2Fapp.example.com%2Fauth%2Fcallback%2Ftest-idp") {
+	if !strings.Contains(loc, "redirect_uri=https%3A%2F%2Fapp.example.com%2Fapi%2Fauth%2Fcallback%2Ftest-idp") {
 		t.Errorf("missing or incorrect redirect_uri: %s", loc)
 	}
 
@@ -239,10 +316,12 @@ func TestCallbackHandler_ErrorFromIdP(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/test-idp/callback?error=access_denied&error_description=user+canceled", nil)
-	req.SetPathValue("id", "test-idp")
+	router := mux.NewRouter()
+	registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "/api/auth"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback/test-idp?error=access_denied&error_description=user+canceled", nil)
 	w := httptest.NewRecorder()
-	registry.CallbackHandler(nil)(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for IdP error, got %d", w.Code)
@@ -268,14 +347,16 @@ func TestCallbackHandler_StateMismatch(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/test-idp/callback?state=state-from-query&code=code123", nil)
-	req.SetPathValue("id", "test-idp")
+	router := mux.NewRouter()
+	registry.RegisterRoutes(router, &AuthRoutesOptions{PathPrefix: "/api/auth"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback/test-idp?state=state-from-query&code=code123", nil)
 	req.AddCookie(&http.Cookie{
 		Name:  "oidc_state_test-idp",
 		Value: "different-state-in-cookie",
 	})
 	w := httptest.NewRecorder()
-	registry.CallbackHandler(nil)(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for state mismatch, got %d", w.Code)
@@ -321,4 +402,3 @@ func TestTokenHandler_ProxySuccess(t *testing.T) {
 		t.Errorf("expected token response, got: %s", w.Body.String())
 	}
 }
-

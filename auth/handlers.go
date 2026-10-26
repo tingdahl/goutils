@@ -35,15 +35,11 @@ func (r *OIDCRegistry) PublicProviders() []PublicProviderInfo {
 
 	result := make([]PublicProviderInfo, 0, len(r.Providers))
 	for _, p := range r.Providers {
-		redirectPath := p.Config.RedirectPath
-		if redirectPath == "" {
-			redirectPath = "/auth/callback/" + p.Config.ID
-		}
 		result = append(result, PublicProviderInfo{
 			ID:           p.Config.ID,
 			Name:         p.Config.Name,
 			Icon:         p.Config.Icon,
-			RedirectPath: redirectPath,
+			RedirectPath: p.Config.RedirectPath,
 		})
 	}
 	return result
@@ -51,9 +47,9 @@ func (r *OIDCRegistry) PublicProviders() []PublicProviderInfo {
 
 // AuthRoutesOptions configures the standard OIDC routes mounted by OIDCRegistry.
 type AuthRoutesOptions struct {
-	// LoginPathPrefix is the path prefix for initiating login.
-	// Defaults to "/api/auth".
-	LoginPathPrefix string
+	// PathPrefix is the required URL prefix for authentication routes (e.g. "/api/auth").
+	// Caller must provide this prefix; there are no defaults.
+	PathPrefix string
 
 	// DefaultReturnTo is where to redirect after successful callback if no return_to parameter is given.
 	// Defaults to "/".
@@ -80,7 +76,7 @@ func (r *OIDCRegistry) getProvider(req *http.Request) *RegisteredProvider {
 func (r *OIDCRegistry) getRedirectURI(req *http.Request, p *RegisteredProvider) string {
 	redirectPath := p.Config.RedirectPath
 	if redirectPath == "" {
-		redirectPath = "/auth/callback/" + p.Config.ID
+		panic(fmt.Sprintf("auth: provider %q has no RedirectPath configured", p.Config.ID))
 	}
 
 	scheme := "http"
@@ -426,12 +422,22 @@ func (r *OIDCRegistry) TokenHandler() http.HandlerFunc {
 }
 
 // RegisterRoutes registers standard OIDC authentication endpoints onto a gorilla/mux router.
+// PathPrefix is required in opts (e.g. "/api/auth"). There are no defaults.
 func (r *OIDCRegistry) RegisterRoutes(router *mux.Router, opts *AuthRoutesOptions) {
-	prefix := "/api/auth"
-	if opts != nil && opts.LoginPathPrefix != "" {
-		prefix = opts.LoginPathPrefix
+	if opts == nil || strings.TrimSpace(opts.PathPrefix) == "" {
+		panic("auth: AuthRoutesOptions.PathPrefix is required")
 	}
-	prefix = strings.TrimSuffix(prefix, "/")
+	prefix := strings.TrimRight(strings.TrimSpace(opts.PathPrefix), "/")
+	if prefix == "" || !strings.HasPrefix(prefix, "/") {
+		panic(`auth: AuthRoutesOptions.PathPrefix must start with /`)
+	}
+
+	// Set RedirectPath on any provider that has not configured a custom one.
+	for i := range r.Providers {
+		if r.Providers[i].Config.RedirectPath == "" {
+			r.Providers[i].Config.RedirectPath = prefix + "/callback/" + r.Providers[i].Config.ID
+		}
+	}
 
 	loginHandler := r.LoginHandler(opts)
 	callbackHandler := r.CallbackHandler(opts)
@@ -439,15 +445,19 @@ func (r *OIDCRegistry) RegisterRoutes(router *mux.Router, opts *AuthRoutesOption
 
 	// Login routes
 	router.HandleFunc(prefix+"/{id}/login", loginHandler).Methods(http.MethodGet)
-	if prefix != "/auth" {
-		router.HandleFunc("/auth/{id}/login", loginHandler).Methods(http.MethodGet)
-	}
 
 	// Callback routes
-	router.HandleFunc(prefix+"/{id}/callback", callbackHandler).Methods(http.MethodGet)
-	router.HandleFunc("/auth/callback/{id}", callbackHandler).Methods(http.MethodGet)
+	router.HandleFunc(prefix+"/callback/{id}", callbackHandler).Methods(http.MethodGet)
+
+	// Also register explicit custom RedirectPath for any provider if configured differently
+	for i := range r.Providers {
+		p := &r.Providers[i]
+		expectedCallback := prefix + "/callback/" + p.Config.ID
+		if p.Config.RedirectPath != "" && p.Config.RedirectPath != expectedCallback {
+			router.HandleFunc(p.Config.RedirectPath, callbackHandler).Methods(http.MethodGet)
+		}
+	}
 
 	// Token proxy route
 	router.HandleFunc(prefix+"/token", tokenHandler).Methods(http.MethodPost)
-
 }
