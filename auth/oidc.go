@@ -17,7 +17,8 @@ type AuthProviderConfig struct {
 	Name         string   `json:"name"`
 	Icon         string   `json:"icon,omitempty"`
 	Issuer       string   `json:"issuer"`
-	ClientID     string   `json:"client_id"`
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientIDName string   `json:"client_id_name,omitempty"`
 	SecretName   string   `json:"secret_name,omitempty"`
 	ClientSecret string   `json:"client_secret,omitempty"`
 	RedirectPath string   `json:"redirect_path,omitempty"`
@@ -112,9 +113,17 @@ func InitOIDCRegistry(ctx context.Context, configJSON string) (*OIDCRegistry, er
 
 	registry := &OIDCRegistry{}
 	for _, p := range payload.AuthProviders {
-		if p.ID == "" || p.Issuer == "" || p.ClientID == "" {
-			return nil, fmt.Errorf("invalid provider config: id, issuer, and client_id are required (got id=%q, issuer=%q)", p.ID, p.Issuer)
+		clientID := p.ClientID
+		if p.ClientIDName != "" {
+			if envVal := config.Config().GetConfigString(p.ClientIDName); envVal != "" {
+				clientID = envVal
+			}
 		}
+
+		if p.ID == "" || p.Issuer == "" || clientID == "" {
+			return nil, fmt.Errorf("invalid provider config: id, issuer, and client_id (or valid client_id_name) are required (got id=%q, issuer=%q)", p.ID, p.Issuer)
+		}
+		p.ClientID = clientID
 
 		providerCtx := ctx
 		isMSMultiTenant := isMicrosoftMultiTenantIssuer(p.Issuer)

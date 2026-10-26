@@ -307,6 +307,32 @@ func TestMsMultiTenantVerifier(t *testing.T) {
 	}
 }
 
+func TestInitOIDCRegistry_ClientIDName(t *testing.T) {
+	server, _ := setupMockOIDCServer(t)
+
+	t.Setenv("TEST_OIDC_CLIENT_ID", "resolved-client-id-from-env")
+
+	configJSON := fmt.Sprintf(`{
+		"auth_providers": [
+			{
+				"id": "mock-provider",
+				"name": "Mock IDP",
+				"issuer": %q,
+				"client_id_name": "TEST_OIDC_CLIENT_ID",
+				"client_secret": "test-secret"
+			}
+		]
+	}`, server.URL)
+
+	reg, err := InitOIDCRegistry(context.Background(), configJSON)
+	if err != nil {
+		t.Fatalf("InitOIDCRegistry failed: %v", err)
+	}
+	if reg.Providers[0].Config.ClientID != "resolved-client-id-from-env" {
+		t.Errorf("expected ClientID resolved from env, got %s", reg.Providers[0].Config.ClientID)
+	}
+}
+
 func TestInitOIDCRegistry_Success(t *testing.T) {
 	server, _ := setupMockOIDCServer(t)
 
