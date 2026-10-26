@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tingdahl/goutils/config"
@@ -23,6 +24,11 @@ type AuthProviderConfig struct {
 	ClientSecret string   `json:"client_secret,omitempty"`
 	RedirectPath string   `json:"redirect_path,omitempty"`
 	Scopes       []string `json:"scopes,omitempty"`
+
+	// Static endpoints (optional; if set, OIDC discovery network requests are bypassed)
+	AuthURL  string `json:"auth_url,omitempty"`
+	TokenURL string `json:"token_url,omitempty"`
+	JWKSURL  string `json:"jwks_url,omitempty"`
 }
 
 // OIDCConfigPayload is the top-level container for provider configuration in JSON.
@@ -42,6 +48,70 @@ type RegisteredProvider struct {
 	Provider     *oidc.Provider
 	Verifier     TokenVerifier
 	ClientSecret string
+	initOnce     *sync.Once
+	initErr      error
+}
+
+// EnsureInitialized initializes provider endpoints and token verifier if not already done.
+// If static endpoints (AuthURL, TokenURL, JWKSURL) were configured, initialization happens
+// instantly with zero network calls. Otherwise, discovery runs lazily on first access.
+func (p *RegisteredProvider) EnsureInitialized(ctx context.Context) error {
+	if p == nil {
+		return fmt.Errorf("provider is nil")
+	}
+	if p.Provider != nil {
+		return nil
+	}
+	if p.Config.Issuer == "" {
+		return fmt.Errorf("provider %q has no issuer configured", p.Config.ID)
+	}
+	if p.initOnce == nil {
+		p.initOnce = new(sync.Once)
+	}
+	p.initOnce.Do(func() {
+		p.initErr = p.initProvider(ctx)
+	})
+	return p.initErr
+}
+
+func (p *RegisteredProvider) initProvider(ctx context.Context) error {
+	if p.Provider != nil && p.Verifier != nil {
+		return nil
+	}
+
+	clientID := p.Config.ClientID
+	isMSMultiTenant := isMicrosoftMultiTenantIssuer(p.Config.Issuer)
+
+	if p.Config.AuthURL != "" && p.Config.TokenURL != "" && p.Config.JWKSURL != "" {
+		cfg := &oidc.ProviderConfig{
+			IssuerURL: p.Config.Issuer,
+			AuthURL:   p.Config.AuthURL,
+			TokenURL:  p.Config.TokenURL,
+			JWKSURL:   p.Config.JWKSURL,
+		}
+		p.Provider = cfg.NewProvider(ctx)
+	} else {
+		providerCtx := ctx
+		if isMSMultiTenant {
+			providerCtx = oidc.InsecureIssuerURLContext(ctx, "https://login.microsoftonline.com/{tenantid}/v2.0")
+		}
+		provider, err := oidc.NewProvider(providerCtx, p.Config.Issuer)
+		if err != nil {
+			return fmt.Errorf("error initializing OIDC provider %q (%s): %w", p.Config.ID, p.Config.Issuer, err)
+		}
+		p.Provider = provider
+	}
+
+	verifierConfig := &oidc.Config{ClientID: clientID}
+	if isMSMultiTenant {
+		verifierConfig.SkipIssuerCheck = true
+	}
+	var verifier TokenVerifier = p.Provider.Verifier(verifierConfig)
+	if isMSMultiTenant {
+		verifier = &msMultiTenantVerifier{underlying: verifier}
+	}
+	p.Verifier = verifier
+	return nil
 }
 
 // OIDCRegistry manages a collection of initialized OIDC providers.
@@ -125,27 +195,7 @@ func InitOIDCRegistry(ctx context.Context, configJSON string) (*OIDCRegistry, er
 		}
 		p.ClientID = clientID
 
-		providerCtx := ctx
-		isMSMultiTenant := isMicrosoftMultiTenantIssuer(p.Issuer)
-		if isMSMultiTenant {
-			providerCtx = oidc.InsecureIssuerURLContext(ctx, "https://login.microsoftonline.com/{tenantid}/v2.0")
-		}
-
-		provider, err := oidc.NewProvider(providerCtx, p.Issuer)
-		if err != nil {
-			return nil, fmt.Errorf("error initializing OIDC provider %q (%s): %w", p.ID, p.Issuer, err)
-		}
-
-		verifierConfig := &oidc.Config{ClientID: p.ClientID}
-		if isMSMultiTenant {
-			verifierConfig.SkipIssuerCheck = true
-		}
-		var verifier TokenVerifier = provider.Verifier(verifierConfig)
-		if isMSMultiTenant {
-			verifier = &msMultiTenantVerifier{underlying: verifier}
-		}
 		clientSecret := p.ClientSecret
-
 		if p.SecretName != "" && clientSecret == "" {
 			if envVal := config.Config().GetConfigString(p.SecretName); envVal != "" {
 				clientSecret = envVal
@@ -154,12 +204,22 @@ func InitOIDCRegistry(ctx context.Context, configJSON string) (*OIDCRegistry, er
 
 		regP := RegisteredProvider{
 			Config:       p,
-			Provider:     provider,
-			Verifier:     verifier,
 			ClientSecret: clientSecret,
+			initOnce:     new(sync.Once),
 		}
+
+		// If static endpoints are specified, initialize immediately with zero network calls.
+		// Otherwise, defer OIDC discovery lazily until first use.
+		if p.AuthURL != "" && p.TokenURL != "" && p.JWKSURL != "" {
+			if err := regP.initProvider(ctx); err != nil {
+				return nil, err
+			}
+			slog.Info("Successfully registered static OIDC provider (zero WAN calls)", "id", p.ID, "issuer", p.Issuer, "client_id", p.ClientID)
+		} else {
+			slog.Info("Successfully registered lazy OIDC provider (discovery deferred)", "id", p.ID, "issuer", p.Issuer, "client_id", p.ClientID)
+		}
+
 		registry.Providers = append(registry.Providers, regP)
-		slog.Info("Successfully registered OIDC provider", "id", p.ID, "issuer", p.Issuer, "client_id", p.ClientID)
 	}
 
 	return registry, nil

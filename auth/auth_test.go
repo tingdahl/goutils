@@ -307,6 +307,74 @@ func TestMsMultiTenantVerifier(t *testing.T) {
 	}
 }
 
+func TestInitOIDCRegistry_StaticEndpoints(t *testing.T) {
+	// With static endpoints, no server/network calls are made
+	configJSON := `{
+		"auth_providers": [
+			{
+				"id": "static-google",
+				"name": "Google",
+				"issuer": "https://accounts.google.com",
+				"auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+				"token_url": "https://oauth2.googleapis.com/token",
+				"jwks_url": "https://www.googleapis.com/oauth2/v3/certs",
+				"client_id": "test-client-id"
+			}
+		]
+	}`
+
+	reg, err := InitOIDCRegistry(context.Background(), configJSON)
+	if err != nil {
+		t.Fatalf("InitOIDCRegistry failed: %v", err)
+	}
+	if len(reg.Providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(reg.Providers))
+	}
+	p := &reg.Providers[0]
+	if p.Provider == nil {
+		t.Fatal("expected Provider to be initialized immediately for static endpoints")
+	}
+	if p.Provider.Endpoint().AuthURL != "https://accounts.google.com/o/oauth2/v2/auth" {
+		t.Errorf("unexpected AuthURL: %s", p.Provider.Endpoint().AuthURL)
+	}
+	if p.Verifier == nil {
+		t.Fatal("expected Verifier to be initialized for static endpoints")
+	}
+}
+
+func TestInitOIDCRegistry_LazyDiscovery(t *testing.T) {
+	server, _ := setupMockOIDCServer(t)
+
+	// Without static endpoints, InitOIDCRegistry does not hit discovery yet
+	configJSON := fmt.Sprintf(`{
+		"auth_providers": [
+			{
+				"id": "lazy-mock",
+				"name": "Mock IDP",
+				"issuer": %q,
+				"client_id": "test-client-id"
+			}
+		]
+	}`, server.URL)
+
+	reg, err := InitOIDCRegistry(context.Background(), configJSON)
+	if err != nil {
+		t.Fatalf("InitOIDCRegistry failed: %v", err)
+	}
+	p := &reg.Providers[0]
+	if p.Provider != nil {
+		t.Fatal("expected Provider to be nil before EnsureInitialized")
+	}
+
+	// Trigger lazy discovery on demand
+	if err := p.EnsureInitialized(context.Background()); err != nil {
+		t.Fatalf("EnsureInitialized failed: %v", err)
+	}
+	if p.Provider == nil {
+		t.Fatal("expected Provider to be initialized after EnsureInitialized")
+	}
+}
+
 func TestInitOIDCRegistry_ClientIDName(t *testing.T) {
 	server, _ := setupMockOIDCServer(t)
 

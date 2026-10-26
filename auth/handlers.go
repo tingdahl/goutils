@@ -122,7 +122,7 @@ func (r *OIDCRegistry) LoginHandler(opts *AuthRoutesOptions) http.HandlerFunc {
 			return
 		}
 
-		if p.Provider == nil {
+		if err := p.EnsureInitialized(req.Context()); err != nil || p.Provider == nil {
 			http.Error(w, "Provider endpoint not initialized", http.StatusInternalServerError)
 			return
 		}
@@ -258,6 +258,11 @@ func (r *OIDCRegistry) CallbackHandler(opts *AuthRoutesOptions) http.HandlerFunc
 			return
 		}
 
+		if err := p.EnsureInitialized(req.Context()); err != nil || p.Provider == nil {
+			http.Error(w, "Provider endpoint not initialized", http.StatusInternalServerError)
+			return
+		}
+
 		redirectURI := r.getRedirectURI(req, p)
 		clientSecret := r.getClientSecret(p)
 
@@ -367,6 +372,9 @@ func (r *OIDCRegistry) TokenHandler() http.HandlerFunc {
 			p = &r.Providers[0]
 		}
 
+		if p != nil {
+			_ = p.EnsureInitialized(req.Context())
+		}
 		if p == nil || p.Provider == nil {
 			http.Error(w, "Unable to resolve identity provider", http.StatusBadRequest)
 			return
