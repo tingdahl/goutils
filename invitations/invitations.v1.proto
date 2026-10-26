@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package invitations;
+option go_package = "github.com/tingdahl/goutils/invitations";
+
+message InvitationProto {
+    string id = 1;
+    string email = 2;
+    string created_by_user_id = 3;
+    int64 created_at_unix_ms = 4;
+    int64 expires_at_unix_ms = 5;
+    int64 target_id = 6;
+    int32 role = 7;
+}
+
+message InvitationsProto {
+    int32 schema_minor_version = 1;
+    string last_modified_by_commit = 2;
+    int64 target_id = 3;
+    repeated InvitationProto invitations = 4;
+}

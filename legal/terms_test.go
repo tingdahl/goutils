@@ -73,7 +73,7 @@ func TestTermsHandler(t *testing.T) {
 		t.Fatalf("failed to decode Protobuf: %v", err)
 	}
 	if info.Type != "broadcaster" || info.Version != "2026-09-21" || info.Content != "Terms content" {
-		t.Errorf("unexpected TermsInfoProto: %+v", info)
+		t.Errorf("unexpected TermsInfoProto: %+v", &info)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestAcceptTermsHandler(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if !resp.Success || resp.Version != "2026-09-21" || resp.AcceptedAtUnixMs == 0 {
-		t.Errorf("unexpected response: %+v", resp)
+		t.Errorf("unexpected response: %+v", &resp)
 	}
 
 	// 5. Store error
