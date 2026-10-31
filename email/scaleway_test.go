@@ -72,6 +72,20 @@ func TestNewScalewaySender(t *testing.T) {
 		t.Errorf("expected default region %q, got %q", config.DefaultSCWRegion, senderDefaultRegion.region)
 	}
 
+	// TEM_REGION environment variable overrides general SCW_REGION
+	t.Setenv("SCW_REGION", "nl-ams")
+	t.Setenv("TEM_REGION", "fr-par")
+	senderTEMRegion, err := NewScalewaySender(
+		WithSecretKey("test-secret"),
+		WithProjectID("test-project"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if senderTEMRegion.region != "fr-par" {
+		t.Errorf("expected TEM_REGION override %q, got %q", "fr-par", senderTEMRegion.region)
+	}
+
 	// Shorthand region normalization ("ams" -> "nl-ams")
 	senderNormalizedRegion, err := NewScalewaySender(
 		WithSecretKey("test-secret"),

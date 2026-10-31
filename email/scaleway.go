@@ -91,7 +91,13 @@ func WithConfig(cm *config.ConfigManager) ScalewayOption {
 			s.secretKey = cm.GetSCWSecretKey()
 		}
 		if s.region == "" {
-			s.region = cm.GetSCWRegion()
+			if temRegion := cm.GetConfigString("TEM_REGION"); temRegion != "" {
+				s.region = temRegion
+			} else if scwTemRegion := cm.GetConfigString("SCW_TEM_REGION"); scwTemRegion != "" {
+				s.region = scwTemRegion
+			} else {
+				s.region = cm.GetSCWRegion()
+			}
 		}
 		if s.overrideTo == "" {
 			s.overrideTo = cm.GetEmailOverrideTo()

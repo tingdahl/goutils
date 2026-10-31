@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package email;
+option go_package = "github.com/tingdahl/goutils/email";
+
+enum EmailStatus {
+    EMAIL_STATUS_CLAIMED = 0;
+    EMAIL_STATUS_SENT = 1;
+    EMAIL_STATUS_FAILED = 2;
+}
+
+message EmailRecordProto {
+    int64 id = 1;
+    string deduplication_key = 2;
+    string template_id = 3;
+    string recipient_email = 4;
+    string recipient_name = 5;
+    string subject = 6;
+    EmailStatus status = 7;
+    int64 claimed_at_unix_ms = 8;
+    int64 sent_at_unix_ms = 9;
+    string provider_message_id = 10;
+    string last_error = 11;
+}
+
+message EmailHistoryProto {
+    int32 schema_minor_version = 1;
+    string last_modified_by_commit = 2;
+    int64 tenant_id = 3;
+    int64 updated_at_unix_ms = 4;
+    repeated EmailRecordProto emails = 5;
+}
