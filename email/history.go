@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -405,6 +406,23 @@ func (c *HistoryClient) SendMessage(ctx context.Context, req SendMessageRequest)
 	})
 
 	if claimErr != nil {
+		if errors.Is(claimErr, ErrAlreadySent) || errors.Is(claimErr, ErrCurrentlyClaimed) {
+			slog.DebugContext(ctx, "email send skipped (already sent or claimed)",
+				"tenant_id", c.tenantID,
+				"dedup_key", dedupKey,
+				"template_id", req.TemplateID,
+				"recipient", req.Message.To[0].Email,
+				"subject", req.Message.Subject,
+			)
+		} else {
+			slog.WarnContext(ctx, "failed to claim email send",
+				"tenant_id", c.tenantID,
+				"dedup_key", dedupKey,
+				"template_id", req.TemplateID,
+				"recipient", req.Message.To[0].Email,
+				"error", claimErr,
+			)
+		}
 		return nil, claimErr
 	}
 
@@ -435,11 +453,35 @@ func (c *HistoryClient) SendMessage(ctx context.Context, req SendMessageRequest)
 	})
 
 	if sendErr != nil {
+		slog.WarnContext(ctx, "failed to send email",
+			"tenant_id", c.tenantID,
+			"template_id", req.TemplateID,
+			"recipient", req.Message.To[0].Email,
+			"subject", req.Message.Subject,
+			"record_id", recordID,
+			"error", sendErr,
+		)
 		return finalRecord, fmt.Errorf("email: send failed: %w", sendErr)
 	}
 	if outcomeErr != nil {
+		slog.WarnContext(ctx, "email sent but failed to update history status",
+			"tenant_id", c.tenantID,
+			"template_id", req.TemplateID,
+			"recipient", req.Message.To[0].Email,
+			"subject", req.Message.Subject,
+			"record_id", recordID,
+			"error", outcomeErr,
+		)
 		return finalRecord, fmt.Errorf("email: send succeeded but failed to update history status: %w", outcomeErr)
 	}
+
+	slog.InfoContext(ctx, "sent email",
+		"tenant_id", c.tenantID,
+		"template_id", req.TemplateID,
+		"recipient", req.Message.To[0].Email,
+		"subject", req.Message.Subject,
+		"record_id", recordID,
+	)
 
 	return finalRecord, nil
 }

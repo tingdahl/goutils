@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -196,6 +197,9 @@ func (s *ScalewaySender) Send(ctx context.Context, msg *Message) error {
 
 	// Apply override if configured: drops all CC and BCC, replaces To with override address.
 	effectiveMsg := msg.ApplyOverride(override)
+	if override != "" {
+		slog.InfoContext(ctx, "email recipient overridden", "override_to", override, "subject", msg.Subject)
+	}
 
 	// Validate effective message
 	if err := effectiveMsg.Validate(); err != nil {
@@ -284,11 +288,21 @@ func (s *ScalewaySender) Send(ctx context.Context, msg *Message) error {
 	body, _ := io.ReadAll(resp.Body)
 	var scwErr scwErrorResponse
 	if jsonErr := json.Unmarshal(body, &scwErr); jsonErr == nil && scwErr.Message != "" {
+		slog.WarnContext(ctx, "scaleway email API error",
+			"status_code", resp.StatusCode,
+			"error_type", scwErr.Type,
+			"error_message", scwErr.Message,
+			"help_message", scwErr.HelpMessage,
+		)
 		if scwErr.HelpMessage != "" {
 			return fmt.Errorf("scaleway email api error (status %d): %s (help: %s)", resp.StatusCode, scwErr.Message, scwErr.HelpMessage)
 		}
 		return fmt.Errorf("scaleway email api error (status %d): %s", resp.StatusCode, scwErr.Message)
 	}
 
+	slog.WarnContext(ctx, "scaleway email API error",
+		"status_code", resp.StatusCode,
+		"body", strings.TrimSpace(string(body)),
+	)
 	return fmt.Errorf("scaleway email api error (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 }
