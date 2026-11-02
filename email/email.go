@@ -4,14 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"mime"
 	"net/mail"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/tingdahl/goutils/config"
 )
+
+var reBodyTag = regexp.MustCompile(`(?i)<body[^>]*>`)
+
+func formatAddressEmails(addrs []Address) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+	parts := make([]string, len(addrs))
+	for i, a := range addrs {
+		parts[i] = a.Email
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatAddresses(addrs []Address) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+	parts := make([]string, len(addrs))
+	for i, a := range addrs {
+		parts[i] = a.String()
+	}
+	return strings.Join(parts, ", ")
+}
 
 var (
 	ErrNilMessage          = errors.New("email: message cannot be nil")
@@ -212,7 +238,8 @@ func (m *Message) Clone() *Message {
 
 // ApplyOverride applies recipient override logic.
 // If overrideAddr is not empty, all CC and BCC recipients are dropped,
-// and the only To recipient is set to overrideAddr.
+// the only To recipient is set to overrideAddr, and an override indicator
+// is prepended to the subject and top of HTML and plaintext bodies.
 func (m *Message) ApplyOverride(overrideAddr string) *Message {
 	trimmed := strings.TrimSpace(overrideAddr)
 	if trimmed == "" {
@@ -220,9 +247,69 @@ func (m *Message) ApplyOverride(overrideAddr string) *Message {
 	}
 
 	cloned := m.Clone()
+	origTo := m.To
+	origCC := m.CC
+	origBCC := m.BCC
+
 	cloned.To = []Address{NewAddress(trimmed, "")}
 	cloned.CC = nil
 	cloned.BCC = nil
+
+	toEmails := formatAddressEmails(origTo)
+	if toEmails == "" {
+		toEmails = "none"
+	}
+	toSummary := formatAddresses(origTo)
+	if toSummary == "" {
+		toSummary = "none"
+	}
+
+	// 1. Update Subject with prefix if not already present
+	if !strings.HasPrefix(cloned.Subject, "[OVERRIDE") {
+		cloned.Subject = fmt.Sprintf("[OVERRIDE to: %s] %s", toEmails, cloned.Subject)
+	}
+
+	// 2. Prepend banner to Plaintext Text body
+	if cloned.Text != "" && !strings.Contains(cloned.Text, "[EMAIL OVERRIDE]") {
+		var tb strings.Builder
+		tb.WriteString("======================================================================\n")
+		tb.WriteString("[EMAIL OVERRIDE]\n")
+		tb.WriteString(fmt.Sprintf("Original To:  %s\n", toSummary))
+		if len(origCC) > 0 {
+			tb.WriteString(fmt.Sprintf("Original CC:  %s\n", formatAddresses(origCC)))
+		}
+		if len(origBCC) > 0 {
+			tb.WriteString(fmt.Sprintf("Original BCC: %s\n", formatAddresses(origBCC)))
+		}
+		tb.WriteString(fmt.Sprintf("Delivered To: %s\n", trimmed))
+		tb.WriteString("======================================================================\n\n")
+		cloned.Text = tb.String() + cloned.Text
+	}
+
+	// 3. Prepend banner to HTML body
+	if cloned.HTML != "" && !strings.Contains(cloned.HTML, "[EMAIL OVERRIDE]") {
+		var hb strings.Builder
+		hb.WriteString(`<div style="background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px 16px; margin: 16px auto; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; line-height: 1.5; max-width: 600px;">` + "\n")
+		hb.WriteString(`  <div style="font-weight: bold; font-size: 14px; margin-bottom: 6px;">&#x26A0;&#xFE0F; [EMAIL OVERRIDE]</div>` + "\n")
+		hb.WriteString(fmt.Sprintf(`  <div><strong>Originally To:</strong> %s</div>`+"\n", html.EscapeString(toSummary)))
+		if len(origCC) > 0 {
+			hb.WriteString(fmt.Sprintf(`  <div><strong>Originally CC:</strong> %s</div>`+"\n", html.EscapeString(formatAddresses(origCC))))
+		}
+		if len(origBCC) > 0 {
+			hb.WriteString(fmt.Sprintf(`  <div><strong>Originally BCC:</strong> %s</div>`+"\n", html.EscapeString(formatAddresses(origBCC))))
+		}
+		hb.WriteString(fmt.Sprintf(`  <div style="margin-top: 4px; font-size: 12px; color: #664d03;"><strong>Delivered To (Override):</strong> %s</div>`+"\n", html.EscapeString(trimmed)))
+		hb.WriteString(`</div>`)
+
+		htmlBanner := hb.String()
+		loc := reBodyTag.FindStringIndex(cloned.HTML)
+		if loc != nil {
+			cloned.HTML = cloned.HTML[:loc[1]] + "\n" + htmlBanner + "\n" + cloned.HTML[loc[1]:]
+		} else {
+			cloned.HTML = htmlBanner + "\n" + cloned.HTML
+		}
+	}
+
 	return cloned
 }
 

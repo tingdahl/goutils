@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/tingdahl/goutils/config"
@@ -312,13 +313,17 @@ func TestMessage_ApplyOverride(t *testing.T) {
 		CC:      []Address{NewAddress("cc1@example.com", "CC1")},
 		BCC:     []Address{NewAddress("bcc1@example.com", "BCC1")},
 		Subject: "Important Notification",
-		Text:    "Content",
+		Text:    "Plain text content",
+		HTML:    "<html><body><h1>Hello World</h1></body></html>",
 	}
 
 	// 1. With empty override address: message is unchanged
 	noOverride := orig.ApplyOverride("")
 	if len(noOverride.To) != 2 || len(noOverride.CC) != 1 || len(noOverride.BCC) != 1 {
 		t.Errorf("ApplyOverride(\"\") modified recipients")
+	}
+	if noOverride.Subject != "Important Notification" {
+		t.Errorf("ApplyOverride(\"\") modified subject: %q", noOverride.Subject)
 	}
 
 	// 2. With override address: CC and BCC are dropped, only To is override address
@@ -337,9 +342,46 @@ func TestMessage_ApplyOverride(t *testing.T) {
 		t.Errorf("expected BCC to be dropped, got %d recipients", len(overridden.BCC))
 	}
 
+	// Check subject prefix
+	expectedPrefix := "[OVERRIDE to: user1@example.com, user2@example.com] Important Notification"
+	if overridden.Subject != expectedPrefix {
+		t.Errorf("expected overridden subject %q, got %q", expectedPrefix, overridden.Subject)
+	}
+
+	// Check plaintext banner
+	if !strings.Contains(overridden.Text, "[EMAIL OVERRIDE]") {
+		t.Errorf("overridden text missing [EMAIL OVERRIDE] banner: %q", overridden.Text)
+	}
+	if !strings.Contains(overridden.Text, "Original To:  \"U1\" <user1@example.com>, \"U2\" <user2@example.com>") {
+		t.Errorf("overridden text missing original To: %q", overridden.Text)
+	}
+	if !strings.Contains(overridden.Text, "Delivered To: dev-trap@example.com") {
+		t.Errorf("overridden text missing delivered To: %q", overridden.Text)
+	}
+	if !strings.Contains(overridden.Text, "Plain text content") {
+		t.Errorf("overridden text lost original content: %q", overridden.Text)
+	}
+
+	// Check HTML banner injected right after <body>
+	if !strings.Contains(overridden.HTML, "[EMAIL OVERRIDE]") {
+		t.Errorf("overridden HTML missing [EMAIL OVERRIDE] banner: %q", overridden.HTML)
+	}
+	if !strings.Contains(overridden.HTML, "<body>\n<div style=") {
+		t.Errorf("overridden HTML banner was not injected after <body>: %q", overridden.HTML)
+	}
+	if !strings.Contains(overridden.HTML, "<h1>Hello World</h1>") {
+		t.Errorf("overridden HTML lost original content: %q", overridden.HTML)
+	}
+
 	// Original must not be modified
 	if len(orig.To) != 2 || len(orig.CC) != 1 || len(orig.BCC) != 1 {
-		t.Errorf("original message was modified during ApplyOverride")
+		t.Errorf("original message recipients were modified during ApplyOverride")
+	}
+	if orig.Subject != "Important Notification" {
+		t.Errorf("original message subject was modified during ApplyOverride")
+	}
+	if strings.Contains(orig.Text, "[EMAIL OVERRIDE]") || strings.Contains(orig.HTML, "[EMAIL OVERRIDE]") {
+		t.Errorf("original message body was modified during ApplyOverride")
 	}
 }
 
