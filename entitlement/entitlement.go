@@ -136,7 +136,7 @@ func (c *EntitlementClient) GetCurrentEntitlementValues() map[int32]int64 {
 
 		for dimId, val := range tx.DimensionValues {
 			if _, ok := c.data.Dimensions[dimId]; !ok {
-				slog.Error("Dimension found on transaction but ont in entitlement", "tenant_id", c.TenantID(), "dimension_id", dimId)
+				slog.Error("Dimension found on transaction but not in entitlement", "tenant_id", c.TenantID(), "dimension_id", dimId)
 				continue
 			}
 
@@ -189,8 +189,6 @@ func (t *EntitlementTransactionProto) validate() error {
 
 	return nil
 }
-
-
 
 func (c *EntitlementClient) AddTransaction(ctx context.Context, transaction *EntitlementTransactionProto) error {
 	if err := transaction.validate(); err != nil {
@@ -248,7 +246,7 @@ func tenantEntitlementPath(tenantID int64) string {
 }
 
 const (
-	DbObjectName = "entitlement.v1.pb.zst"
+	DbObjectName       = "entitlement.v1.pb.zst"
 	SchemaMinor  int32 = 1
 )
 
