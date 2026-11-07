@@ -38,6 +38,16 @@ const (
 	HeaderGCPTrace  = "X-Cloud-Trace-Context"
 )
 
+var (
+	// ZeroCookiePolicy when true strictly adheres to a zero-cookie policy:
+	// session cookies are never set, and session IDs are not read from cookies.
+	ZeroCookiePolicy bool
+
+	// ZeroPIILogging when true strictly adheres to zero-PII logging:
+	// client IP addresses are never injected into context or logged.
+	ZeroPIILogging bool
+)
+
 // ContextHandler is a slog.Handler that pulls observability keys from context
 // and adds them as structured attributes to log records.
 type ContextHandler struct {
@@ -66,8 +76,10 @@ func (h *ContextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if email, ok := ctx.Value(emailContextKey).(string); ok && email != "" {
 		r.AddAttrs(slog.String(LogKeyEmail, email))
 	}
-	if clientIP, ok := ctx.Value(clientIPContextKey).(string); ok && clientIP != "" {
-		r.AddAttrs(slog.String(LogKeyClientIP, clientIP))
+	if !ZeroPIILogging {
+		if clientIP, ok := ctx.Value(clientIPContextKey).(string); ok && clientIP != "" {
+			r.AddAttrs(slog.String(LogKeyClientIP, clientIP))
+		}
 	}
 	if userAgent, ok := ctx.Value(userAgentContextKey).(string); ok && userAgent != "" {
 		r.AddAttrs(slog.String(LogKeyUserAgent, userAgent))
@@ -97,21 +109,31 @@ func TraceMiddleware(next http.Handler) http.Handler {
 		// Handle Session ID
 		sessionID := GetSessionIDFromRequest(r)
 		if sessionID == "" {
-			sessionID = uuid.New().String()
-			SetSessionCookie(w, sessionID)
+			if ZeroCookiePolicy {
+				sessionID = "none"
+			} else {
+				sessionID = uuid.New().String()
+				SetSessionCookie(w, sessionID)
+			}
 		}
 
-		clientIP := GetClientIP(r)
 		userAgent := r.UserAgent()
 
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, traceContextKey, traceID)
-		ctx = context.WithValue(ctx, sessionContextKey, sessionID)
-		ctx = context.WithValue(ctx, clientIPContextKey, clientIP)
+		if sessionID != "" && sessionID != "none" {
+			ctx = context.WithValue(ctx, sessionContextKey, sessionID)
+		}
+		if !ZeroPIILogging {
+			clientIP := GetClientIP(r)
+			ctx = context.WithValue(ctx, clientIPContextKey, clientIP)
+		}
 		ctx = context.WithValue(ctx, userAgentContextKey, userAgent)
 
 		SetTraceIDInResponse(w, traceID)
-		SetSessionIDInResponse(w, sessionID)
+		if sessionID != "" && sessionID != "none" {
+			SetSessionIDInResponse(w, sessionID)
+		}
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -135,7 +157,7 @@ func SetTraceIDInResponse(w http.ResponseWriter, id string) {
 // GetSessionIDFromRequest extracts Session-ID from headers or cookies.
 func GetSessionIDFromRequest(r *http.Request) string {
 	id := r.Header.Get(HeaderSessionID)
-	if id == "" {
+	if id == "" && !ZeroCookiePolicy {
 		if cookie, err := r.Cookie(CookieSessionID); err == nil {
 			id = cookie.Value
 		}
@@ -150,6 +172,9 @@ func SetSessionIDInResponse(w http.ResponseWriter, id string) {
 
 // SetSessionCookie sets the persistent session cookie.
 func SetSessionCookie(w http.ResponseWriter, id string) {
+	if ZeroCookiePolicy {
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieSessionID,
 		Value:    id,

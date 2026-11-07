@@ -203,3 +203,53 @@ func TestContextHandler_Delegation(t *testing.T) {
 		t.Error("WithGroup returned nil")
 	}
 }
+
+func TestTraceMiddleware_ZeroCookieAndZeroPII(t *testing.T) {
+	ZeroCookiePolicy = true
+	ZeroPIILogging = true
+	defer func() {
+		ZeroCookiePolicy = false
+		ZeroPIILogging = false
+	}()
+
+	var capturedSession string
+	var capturedIP string
+	handler := TraceMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedSession = GetSessionID(r.Context())
+		capturedIP = GetClientIPFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Case 1: No X-Session-ID header sent -> no cookie set, session is not in context, no IP in context
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req1.RemoteAddr = "192.0.2.1:1234"
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	if len(rec1.Result().Cookies()) != 0 {
+		t.Errorf("expected 0 cookies under ZeroCookiePolicy, got %d", len(rec1.Result().Cookies()))
+	}
+	if capturedIP != "" {
+		t.Errorf("expected empty capturedIP under ZeroPIILogging, got %q", capturedIP)
+	}
+	if capturedSession != "" {
+		t.Errorf("expected empty session in context when none provided, got %q", capturedSession)
+	}
+
+	// Case 2: X-Session-ID header provided -> session captured, no cookie set, no IP logged
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req2.Header.Set(HeaderSessionID, "custom-tab-uuid")
+	req2.RemoteAddr = "192.0.2.1:1234"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	if len(rec2.Result().Cookies()) != 0 {
+		t.Errorf("expected 0 cookies, got %d", len(rec2.Result().Cookies()))
+	}
+	if capturedSession != "custom-tab-uuid" {
+		t.Errorf("expected capturedSession 'custom-tab-uuid', got %q", capturedSession)
+	}
+	if rec2.Header().Get(HeaderSessionID) != "custom-tab-uuid" {
+		t.Errorf("expected HeaderSessionID 'custom-tab-uuid', got %q", rec2.Header().Get(HeaderSessionID))
+	}
+}
