@@ -509,4 +509,80 @@ func TestRepository_CrossPod_CacheInvalidation(t *testing.T) {
 			t.Fatalf("expected v2 after WithForceCheck, got %s", docBForced.client.StringValue())
 		}
 	})
+
+	t.Run("HeldPointer_RLockAutoRefresh_WithoutRepoGet", func(t *testing.T) {
+		store := newMockDocStorage()
+		initialData, _ := proto.Marshal(wrapperspb.String("v1"))
+		store.data["singleton-doc"] = initialData
+		store.revisions["singleton-doc"] = "rev-1"
+
+		factory := func(ctx context.Context, objectPath string) (*testDomainDoc, error) {
+			return newTestDomainDoc(store, "test-bucket", objectPath)
+		}
+
+		repoA := NewRepository(factory, WithRevisionPolicy(CheckAlways))
+		repoB := NewRepository(factory, WithRevisionPolicy(CheckInterval(50*time.Millisecond)))
+
+		// Both pods call repo.Get ONLY ONCE at boot and hold the pointer.
+		docA, err := repoA.Get(ctx, "singleton-doc")
+		if err != nil {
+			t.Fatalf("pod A Get failed: %v", err)
+		}
+		docB, err := repoB.Get(ctx, "singleton-doc")
+		if err != nil {
+			t.Fatalf("pod B Get failed: %v", err)
+		}
+
+		readUnderRLock := func(d *testDomainDoc) string {
+			d.Rwlock.RLock()
+			defer d.Rwlock.RUnlock()
+			return d.client.StringValue()
+		}
+
+		if got := readUnderRLock(docB); got != "v1" {
+			t.Fatalf("expected initial v1, got %q", got)
+		}
+
+		// Pod A updates the document in storage.
+		err = docA.Update(ctx, func(msg proto.Message) error {
+			if s, ok := msg.(*wrapperspb.StringValue); ok {
+				s.Value = "v2-from-pod-a"
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("pod A update failed: %v", err)
+		}
+
+		// Immediate read on held pointer docB (< 50ms) serves cached "v1" without repoB.Get.
+		if got := readUnderRLock(docB); got != "v1" {
+			t.Fatalf("expected cached v1 before interval elapsed, got %q", got)
+		}
+
+		// Wait for CheckInterval to elapse.
+		time.Sleep(60 * time.Millisecond)
+
+		// Reading directly via docB.Rwlock.RLock() (never calling repoB.Get) must auto-reload "v2-from-pod-a".
+		if got := readUnderRLock(docB); got != "v2-from-pod-a" {
+			t.Fatalf("expected held pointer RLock to auto-reload v2-from-pod-a, got %q", got)
+		}
+
+		// Pod A updates again to v3, and Pod B reads via TryRLock after interval.
+		_ = docA.Update(ctx, func(msg proto.Message) error {
+			if s, ok := msg.(*wrapperspb.StringValue); ok {
+				s.Value = "v3-try-rlock"
+			}
+			return nil
+		})
+		time.Sleep(60 * time.Millisecond)
+
+		if !docB.Rwlock.TryRLock() {
+			t.Fatalf("expected TryRLock to succeed")
+		}
+		gotTry := docB.client.StringValue()
+		docB.Rwlock.RUnlock()
+		if gotTry != "v3-try-rlock" {
+			t.Fatalf("expected held pointer TryRLock to auto-reload v3-try-rlock, got %q", gotTry)
+		}
+	})
 }

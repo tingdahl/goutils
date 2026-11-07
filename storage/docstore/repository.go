@@ -105,7 +105,6 @@ func WithMaxAge(d time.Duration) GetOption {
 
 type cacheEntry[T DocumentHolder] struct {
 	doc          T
-	lastChecked  time.Time
 	lastAccessed time.Time
 }
 
@@ -182,11 +181,14 @@ func (r *Repository[T]) Get(ctx context.Context, objectPath string, opts ...GetO
 				return zero, err
 			}
 
+			if d := loaded.GetDocument(); d != nil {
+				d.SetRevisionPolicy(r.policy)
+			}
+
 			now := time.Now()
 			r.mu.Lock()
 			r.entries[objectPath] = &cacheEntry[T]{
 				doc:          loaded,
-				lastChecked:  now,
 				lastAccessed: now,
 			}
 			r.mu.Unlock()
@@ -203,51 +205,14 @@ func (r *Repository[T]) Get(ctx context.Context, objectPath string, opts ...GetO
 
 	// 2. Generation / Revision Validation
 	if !justLoaded {
-		needsCheck := false
-		if callOpts.forceCheck {
-			needsCheck = true
-		} else if callOpts.skipCheck {
-			needsCheck = false
-		} else if callOpts.maxAge != nil {
-			r.mu.RLock()
-			needsCheck = time.Since(entry.lastChecked) >= *callOpts.maxAge
-			r.mu.RUnlock()
-		} else {
-			switch r.policy.mode {
-			case policyAlways:
-				needsCheck = true
-			case policyInterval:
-				r.mu.RLock()
-				needsCheck = time.Since(entry.lastChecked) >= r.policy.interval
-				r.mu.RUnlock()
-			case policyNever:
-				needsCheck = false
-			}
+		d := doc.GetDocument()
+		if d == nil {
+			var zero T
+			return zero, errors.New("underlying document is nil")
 		}
-
-		if needsCheck {
-			_, err, _ := r.flight.Do("check:"+objectPath, func() (any, error) {
-				d := doc.GetDocument()
-				if d == nil {
-					return nil, errors.New("underlying document is nil")
-				}
-
-				if _, err := d.CheckAndReload(ctx); err != nil {
-					return nil, err
-				}
-
-				r.mu.Lock()
-				if e, ok := r.entries[objectPath]; ok {
-					e.lastChecked = time.Now()
-				}
-				r.mu.Unlock()
-
-				return nil, nil
-			})
-			if err != nil {
-				var zero T
-				return zero, err
-			}
+		if err := d.ensureFresh(ctx, callOpts); err != nil {
+			var zero T
+			return zero, err
 		}
 	}
 
