@@ -17,8 +17,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// EntitlementRevisionCheckInterval is the default period before checking storage for entitlement updates.
+const EntitlementRevisionCheckInterval = 1 * time.Minute
+
 // Init initializes the entitlement repository for the given storage client and prefix.
-func Init(store storage.StorageClient, prefix string) error {
+func Init(store storage.StorageClient, prefix string, opts ...docstore.RepositoryOption) error {
 	if store == nil {
 		return errors.New("storage client cannot be nil")
 	}
@@ -26,7 +29,11 @@ func Init(store storage.StorageClient, prefix string) error {
 	entitlementInitOnce.Do(func() {
 		entitlementPrefix = prefix
 		entitlementStore = store
-		entitlementRepo = docstore.NewRepository(entitlementClientFactory)
+		defaultOpts := []docstore.RepositoryOption{
+			docstore.WithRevisionPolicy(docstore.CheckInterval(EntitlementRevisionCheckInterval)),
+			docstore.WithMaxLifetime(docstore.DefaultMaxLifetime),
+		}
+		entitlementRepo = docstore.NewRepository(entitlementClientFactory, append(defaultOpts, opts...)...)
 	})
 	return nil
 }

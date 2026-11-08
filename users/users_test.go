@@ -253,3 +253,38 @@ func TestUsersClient_DropLegacyInvitePlaceholders(t *testing.T) {
 		t.Errorf("expected legacy invite placeholder to be dropped, got %d users", len(uc.users.Users))
 	}
 }
+
+func TestUsersClient_HeldPointerFreshness(t *testing.T) {
+	uc, mockStore := setupTestUsersClient(t)
+	ctx := context.Background()
+
+	if _, err := uc.AddUserWithIdentity(ctx, "initial@example.com", "u-1", "Initial User", "google", "sub-1"); err != nil {
+		t.Fatalf("failed to add initial user: %v", err)
+	}
+
+	// Simulate an out-of-band write to storage (e.g. another pod or admin tool adding u-2).
+	externalDoc := &UsersProto{
+		SchemaMinorVersion: SchemaMinor,
+		Users: []*UserProtoRow{
+			{Id: "u-1", Email: "initial@example.com", Name: "Initial User", Identities: map[string]string{"google": "sub-1"}},
+			{Id: "u-2", Email: "external@example.com", Name: "External User", Identities: map[string]string{"google": "sub-2"}},
+		},
+	}
+	raw, err := proto.Marshal(externalDoc)
+	if err != nil {
+		t.Fatalf("failed to marshal external doc: %v", err)
+	}
+	if _, err := mockStore.WriteObject(ctx, DefaultUsersDocumentName, raw); err != nil {
+		t.Fatalf("failed to write external doc: %v", err)
+	}
+
+	// Wait for the 10ms revision check interval configured in setupTestUsersClient to elapse.
+	time.Sleep(20 * time.Millisecond)
+
+	// Calling GetUserByEmail directly on the held uc pointer (without calling GetUsersClient)
+	// must automatically check storage and reload the document.
+	got := uc.GetUserByEmail("external@example.com")
+	if got == nil || got.Id != "u-2" {
+		t.Fatalf("expected held UsersClient pointer to auto-reload external user u-2, got: %+v", got)
+	}
+}

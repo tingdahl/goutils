@@ -55,7 +55,11 @@ func Init(store storage.StorageClient, prefix string, opts ...docstore.Repositor
 			historyPrefix = prefix
 		}
 		historyStore = store
-		historyRepo = docstore.NewRepository(historyClientFactory, opts...)
+		defaultOpts := []docstore.RepositoryOption{
+			docstore.WithRevisionPolicy(docstore.CheckInterval(docstore.DefaultRevisionCheckInterval)),
+			docstore.WithMaxLifetime(docstore.DefaultMaxLifetime),
+		}
+		historyRepo = docstore.NewRepository(historyClientFactory, append(defaultOpts, opts...)...)
 	})
 	return nil
 }

@@ -43,15 +43,15 @@ type DocumentUpdateFunc func(proto.Message) error
 // RevisionPolicy before acquiring a read lock.
 type RWMutex struct {
 	mu  sync.RWMutex
-	doc *Document
+	doc atomic.Pointer[Document]
 }
 
 // RLock checks whether the owning Document needs a storage revision check according
 // to its configured RevisionPolicy (reloading if the remote revision changed) before
 // acquiring the read lock.
 func (m *RWMutex) RLock() {
-	if m.doc != nil {
-		m.doc.maybeRefreshBeforeRead()
+	if doc := m.doc.Load(); doc != nil {
+		doc.maybeRefreshBeforeRead()
 	}
 	m.mu.RLock()
 }
@@ -60,12 +60,12 @@ func (m *RWMutex) RLock() {
 // If the lock is free and the document is stale per its RevisionPolicy, it refreshes
 // before acquiring the read lock.
 func (m *RWMutex) TryRLock() bool {
-	if m.doc != nil && m.doc.needsRevisionCheck(getOpts{}) {
+	if doc := m.doc.Load(); doc != nil && doc.needsRevisionCheck(getOpts{}) {
 		if !m.mu.TryRLock() {
 			return false
 		}
 		m.mu.RUnlock()
-		m.doc.maybeRefreshBeforeRead()
+		doc.maybeRefreshBeforeRead()
 	}
 	return m.mu.TryRLock()
 }
@@ -87,8 +87,8 @@ func (m *RWMutex) TryLock() bool {
 
 // Unlock releases the write lock and marks the document as freshly checked.
 func (m *RWMutex) Unlock() {
-	if m.doc != nil {
-		m.doc.lastCheckedNano.Store(time.Now().UnixNano())
+	if doc := m.doc.Load(); doc != nil {
+		doc.lastCheckedNano.Store(time.Now().UnixNano())
 	}
 	m.mu.Unlock()
 }
@@ -113,10 +113,8 @@ type Document struct {
 
 // GetDocument returns the pointer to the underlying Document and ensures Rwlock is bound.
 func (d *Document) GetDocument() *Document {
-	if d != nil && d.Rwlock.doc == nil {
-		d.Rwlock.mu.Lock()
-		d.Rwlock.doc = d
-		d.Rwlock.mu.Unlock()
+	if d != nil && d.Rwlock.doc.Load() == nil {
+		d.Rwlock.doc.Store(d)
 	}
 	return d
 }
@@ -127,8 +125,8 @@ func (d *Document) SetRevisionPolicy(policy RevisionPolicy) {
 	if d == nil {
 		return
 	}
+	d.Rwlock.doc.Store(d)
 	d.Rwlock.mu.Lock()
-	d.Rwlock.doc = d
 	if d.lastCheckedNano.Load() == 0 {
 		if !d.LastRead.IsZero() {
 			d.lastCheckedNano.Store(d.LastRead.UnixNano())
@@ -233,8 +231,8 @@ func (d *Document) CheckAndReload(ctx context.Context) (bool, error) {
 
 	if remoteRev == localRev {
 		now := time.Now()
+		d.Rwlock.doc.Store(d)
 		d.Rwlock.mu.Lock()
-		d.Rwlock.doc = d
 		d.LastRead = now
 		d.lastCheckedNano.Store(now.UnixNano())
 		d.Rwlock.mu.Unlock()
@@ -248,7 +246,7 @@ func (d *Document) CheckAndReload(ctx context.Context) (bool, error) {
 	// Double check under write lock to avoid duplicate reload if another goroutine reloaded it.
 	if remoteRev != "" && d.Revision == remoteRev {
 		now := time.Now()
-		d.Rwlock.doc = d
+		d.Rwlock.doc.Store(d)
 		d.LastRead = now
 		d.lastCheckedNano.Store(now.UnixNano())
 		return false, nil
@@ -280,7 +278,7 @@ func isNotFoundError(err error) bool {
 
 // DoLoad fetches the document from storage, handling missing documents as empty initial state.
 func (d *Document) DoLoad() error {
-	d.Rwlock.doc = d
+	d.Rwlock.doc.Store(d)
 	data, revision, err := d.Storage.ReadObject(context.Background(), d.ObjectName)
 	if err != nil {
 		if isNotFoundError(err) {
@@ -322,7 +320,7 @@ func (d *Document) DoLoad() error {
 func (d *Document) Update(ctx context.Context, updateFn DocumentUpdateFunc) error {
 	d.Rwlock.mu.Lock()
 	defer d.Rwlock.mu.Unlock()
-	d.Rwlock.doc = d
+	d.Rwlock.doc.Store(d)
 
 	for i := 0; i < 100; i++ {
 		if err := ctx.Err(); err != nil {

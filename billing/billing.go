@@ -17,7 +17,7 @@ import (
 )
 
 // Init initializes the billing repository for the given storage client and prefix.
-func Init(store storage.StorageClient, prefix string) error {
+func Init(store storage.StorageClient, prefix string, opts ...docstore.RepositoryOption) error {
 	if store == nil {
 		return errors.New("storage client cannot be nil")
 	}
@@ -25,7 +25,11 @@ func Init(store storage.StorageClient, prefix string) error {
 	billingInitOnce.Do(func() {
 		billingPrefix = prefix
 		billingStore = store
-		billingRepo = docstore.NewRepository(billingClientFactory)
+		defaultOpts := []docstore.RepositoryOption{
+			docstore.WithRevisionPolicy(docstore.CheckInterval(docstore.DefaultRevisionCheckInterval)),
+			docstore.WithMaxLifetime(docstore.DefaultMaxLifetime),
+		}
+		billingRepo = docstore.NewRepository(billingClientFactory, append(defaultOpts, opts...)...)
 	})
 	return nil
 }

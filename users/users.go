@@ -22,7 +22,7 @@ const (
 	DefaultUsersDocumentName = "users.v1.pb.zst"
 
 	// UsersRevisionCheckInterval is the default period before checking storage for updates.
-	UsersRevisionCheckInterval = 60 * time.Second
+	UsersRevisionCheckInterval = 5 * time.Minute
 )
 
 var (

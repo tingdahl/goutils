@@ -299,7 +299,11 @@ func Init(store storage.StorageClient, prefix string, opts ...docstore.Repositor
 			invitationsPrefix = strings.Trim(prefix, "/")
 		}
 		invitationsStore = store
-		invitationsRepo = docstore.NewRepository(invitationsClientFactory, opts...)
+		defaultOpts := []docstore.RepositoryOption{
+			docstore.WithRevisionPolicy(docstore.CheckInterval(docstore.DefaultRevisionCheckInterval)),
+			docstore.WithMaxLifetime(docstore.DefaultMaxLifetime),
+		}
+		invitationsRepo = docstore.NewRepository(invitationsClientFactory, append(defaultOpts, opts...)...)
 	})
 	return nil
 }

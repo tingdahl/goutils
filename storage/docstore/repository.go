@@ -9,8 +9,11 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// DefaultRevisionCheckInterval is the standard revision check interval (5s) for multi-pod environments.
-const DefaultRevisionCheckInterval = 5 * time.Second
+// DefaultRevisionCheckInterval is the standard revision check interval (5m) for multi-pod environments.
+const DefaultRevisionCheckInterval = 5 * time.Minute
+
+// DefaultMaxLifetime is the default idle duration (1h) before per-tenant cache entries are pruned.
+const DefaultMaxLifetime = 1 * time.Hour
 
 // Factory is called to instantiate and load a document when a cache miss occurs.
 type Factory[T DocumentHolder] func(ctx context.Context, objectPath string) (T, error)
@@ -45,7 +48,7 @@ func CheckInterval(interval time.Duration) RevisionPolicy {
 	}
 }
 
-// DefaultRevisionPolicy returns the default revision checking policy (5s check interval).
+// DefaultRevisionPolicy returns the default revision checking policy (5m check interval).
 func DefaultRevisionPolicy() RevisionPolicy {
 	return CheckInterval(DefaultRevisionCheckInterval)
 }

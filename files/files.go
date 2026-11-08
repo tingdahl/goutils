@@ -24,6 +24,7 @@ var (
 	// ErrFileNotFound indicates that a requested file was not found in the catalog.
 	ErrFileNotFound = errors.New("file not found")
 
+	filesMu       sync.RWMutex
 	filesInitOnce sync.Once
 	filesRepo     *docstore.Repository[*FilesClient]
 	filesStore    storage.StorageClient
@@ -54,26 +55,37 @@ func Init(store storage.StorageClient, opts ...docstore.RepositoryOption) error 
 	}
 
 	filesInitOnce.Do(func() {
+		filesMu.Lock()
 		filesStore = store
-		filesRepo = docstore.NewRepository(filesClientFactory, opts...)
+		defaultOpts := []docstore.RepositoryOption{
+			docstore.WithRevisionPolicy(docstore.CheckInterval(docstore.DefaultRevisionCheckInterval)),
+			docstore.WithMaxLifetime(docstore.DefaultMaxLifetime),
+		}
+		filesRepo = docstore.NewRepository(filesClientFactory, append(defaultOpts, opts...)...)
+		filesMu.Unlock()
 	})
 	return nil
 }
 
 // ResetForTesting resets the package repository state for test isolation.
 func ResetForTesting() {
+	filesMu.Lock()
 	filesInitOnce = sync.Once{}
 	filesRepo = nil
 	filesStore = nil
+	filesMu.Unlock()
 }
 
 // GetFilesClient retrieves the cached FilesClient for the given storage prefix.
 func GetFilesClient(ctx context.Context, prefix string, opts ...docstore.GetOption) (*FilesClient, error) {
-	if filesRepo == nil {
+	filesMu.RLock()
+	repo := filesRepo
+	filesMu.RUnlock()
+	if repo == nil {
 		return nil, errors.New("files package not initialized: call files.Init() first")
 	}
 	cleanPrefix := strings.Trim(prefix, "/")
-	return filesRepo.Get(ctx, FilesCatalogObjectName(cleanPrefix), opts...)
+	return repo.Get(ctx, FilesCatalogObjectName(cleanPrefix), opts...)
 }
 
 // FilesClient manages a catalog of files and raw file binary storage within a prefix.
@@ -106,7 +118,10 @@ func (f *FilesClient) StampVersion(msg proto.Message, schemaMinor int32, commit 
 }
 
 func filesClientFactory(ctx context.Context, objectPath string) (*FilesClient, error) {
-	if filesStore == nil {
+	filesMu.RLock()
+	store := filesStore
+	filesMu.RUnlock()
+	if store == nil {
 		return nil, errors.New("storage client cannot be nil")
 	}
 	if objectPath == "" {
@@ -121,7 +136,7 @@ func filesClientFactory(ctx context.Context, objectPath string) (*FilesClient, e
 	fc := &FilesClient{prefix: cleanPrefix}
 	fc.Document = docstore.Document{
 		Client:               fc,
-		Storage:              filesStore,
+		Storage:              store,
 		ObjectName:           objectPath,
 		ProtoMsg:             &fc.data,
 		SupportedSchemaMinor: SchemaMinor,
@@ -183,14 +198,14 @@ func (f *FilesClient) GetFilesByReference(refType ReferenceType, refId int32, en
 // WriteFileContent writes the raw binary content of a file to object storage.
 func (f *FilesClient) WriteFileContent(ctx context.Context, fileId int32, data []byte) error {
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	_, err := filesStore.WriteObject(ctx, rawObj, data)
+	_, err := f.Storage.WriteObject(ctx, rawObj, data)
 	return err
 }
 
 // ReadFileContent reads the raw binary content of a file from object storage.
 func (f *FilesClient) ReadFileContent(ctx context.Context, fileId int32) ([]byte, error) {
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	data, _, err := filesStore.ReadRawObject(ctx, rawObj)
+	data, _, err := f.Storage.ReadRawObject(ctx, rawObj)
 	return data, err
 }
 
@@ -200,14 +215,14 @@ func (f *FilesClient) GetSignedURL(ctx context.Context, fileId int32, durationSe
 	if fileId <= 0 {
 		return "", errors.New("invalid file id")
 	}
-	if filesStore == nil {
+	if f.Storage == nil {
 		return "", errors.New("storage client cannot be nil")
 	}
 	if durationSeconds <= 0 {
 		durationSeconds = 60
 	}
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	return filesStore.GetObjectLink(ctx, rawObj, durationSeconds, "")
+	return f.Storage.GetObjectLink(ctx, rawObj, durationSeconds, "")
 }
 
 // AddFile registers a new file metadata record in the catalog and assigns a unique file_id.
@@ -309,6 +324,6 @@ func (f *FilesClient) DeleteFile(ctx context.Context, fileId int32) error {
 	}
 
 	rawObj := FileRawObjectName(f.prefix, fileId)
-	_ = filesStore.DeleteObject(ctx, rawObj)
+	_ = f.Storage.DeleteObject(ctx, rawObj)
 	return nil
 }
