@@ -288,3 +288,71 @@ func TestUsersClient_HeldPointerFreshness(t *testing.T) {
 		t.Fatalf("expected held UsersClient pointer to auto-reload external user u-2, got: %+v", got)
 	}
 }
+
+func TestUsersClient_VerifyOnMiss_MultiPod(t *testing.T) {
+	ResetForTesting()
+	mockStore := storage.NewMockStorageClient()
+	// Configure with standard 5-minute revision check interval so normal interval checks do NOT fire.
+	err := Init(mockStore, docstore.WithRevisionPolicy(docstore.CheckInterval(5*time.Minute)))
+	if err != nil {
+		t.Fatalf("failed to init users repo: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Pod 1 creates and initializes the document with an initial user.
+	pod1Uc, err := GetUsersClient(ctx)
+	if err != nil {
+		t.Fatalf("failed to get pod1 users client: %v", err)
+	}
+	if _, err := pod1Uc.AddUserWithIdentity(ctx, "pod1@example.com", "u-1", "Pod1 User", "google", "sub-1"); err != nil {
+		t.Fatalf("pod1 failed to add user: %v", err)
+	}
+
+	// Pod 2 loads the document into its own distinct client instance.
+	pod2Doc := &UsersClient{}
+	pod2Doc.Document = docstore.Document{
+		Client:               pod2Doc,
+		Storage:              mockStore,
+		ObjectName:           DefaultUsersDocumentName,
+		ProtoMsg:             &pod2Doc.users,
+		SupportedSchemaMinor: SchemaMinor,
+	}
+	if err := pod2Doc.DoLoad(); err != nil {
+		t.Fatalf("pod2 failed to load document: %v", err)
+	}
+	pod2Doc.SetRevisionPolicy(docstore.CheckInterval(5 * time.Minute))
+
+	// Verify Pod 2 has u-1 in memory.
+	if u := pod2Doc.GetUserByID("u-1"); u == nil {
+		t.Fatalf("pod2 expected to have u-1 in memory")
+	}
+
+	// Pod 1 writes a new user (simulating cross-replica write in k8s).
+	if _, err := pod1Uc.AddUserWithIdentity(ctx, "pod2-new@example.com", "u-2", "Pod2 New", "google", "sub-2"); err != nil {
+		t.Fatalf("pod1 failed to add u-2: %v", err)
+	}
+
+	// Pod 2 receives a request for u-2 IMMEDIATELY (0ms wait, well within 5m interval).
+	// On cache miss, Pod 2 must verify with storage, reload, and return u-2.
+	byID := pod2Doc.GetUserByID("u-2")
+	if byID == nil || byID.Email != "pod2-new@example.com" {
+		t.Fatalf("pod2 failed to find u-2 by ID via verify-on-miss: %+v", byID)
+	}
+
+	// Verify lookups by email and identity also work seamlessly.
+	byEmail := pod2Doc.GetUserByEmail("pod2-new@example.com")
+	if byEmail == nil || byEmail.Id != "u-2" {
+		t.Fatalf("pod2 failed to find u-2 by email via verify-on-miss: %+v", byEmail)
+	}
+
+	byIdent := pod2Doc.GetUserByIdentity("google", "sub-2")
+	if byIdent == nil || byIdent.Id != "u-2" {
+		t.Fatalf("pod2 failed to find u-2 by identity via verify-on-miss: %+v", byIdent)
+	}
+
+	// Non-existent user returns nil cleanly without error.
+	if nonExistent := pod2Doc.GetUserByID("u-does-not-exist"); nonExistent != nil {
+		t.Fatalf("expected nil for non-existent user, got: %+v", nonExistent)
+	}
+}

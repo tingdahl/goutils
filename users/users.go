@@ -149,7 +149,22 @@ func (u *UsersClient) StampVersion(msg proto.Message, schemaMinor int32, commit 
 }
 
 // GetUserByID looks up a user by user ID under a read lock.
+// If the user is not found in memory, it optimistically checks whether storage has a newer revision
+// (e.g. written by another replica) and re-checks before returning nil.
 func (u *UsersClient) GetUserByID(id string) *UserProtoRow {
+	if id == "" {
+		return nil
+	}
+	if user := u.getUserByIDInMemory(id); user != nil {
+		return user
+	}
+	if reloaded, _ := u.CheckAndReload(context.Background()); reloaded {
+		return u.getUserByIDInMemory(id)
+	}
+	return nil
+}
+
+func (u *UsersClient) getUserByIDInMemory(id string) *UserProtoRow {
 	u.Rwlock.RLock()
 	defer u.Rwlock.RUnlock()
 
@@ -162,7 +177,22 @@ func (u *UsersClient) GetUserByID(id string) *UserProtoRow {
 }
 
 // GetUserByEmail looks up a user by email address (case-insensitive) under a read lock.
+// If the user is not found in memory, it optimistically checks whether storage has a newer revision
+// (e.g. written by another replica) and re-checks before returning nil.
 func (u *UsersClient) GetUserByEmail(email string) *UserProtoRow {
+	if email == "" {
+		return nil
+	}
+	if user := u.getUserByEmailInMemory(email); user != nil {
+		return user
+	}
+	if reloaded, _ := u.CheckAndReload(context.Background()); reloaded {
+		return u.getUserByEmailInMemory(email)
+	}
+	return nil
+}
+
+func (u *UsersClient) getUserByEmailInMemory(email string) *UserProtoRow {
 	u.Rwlock.RLock()
 	defer u.Rwlock.RUnlock()
 
@@ -175,7 +205,22 @@ func (u *UsersClient) GetUserByEmail(email string) *UserProtoRow {
 }
 
 // GetUserByIdentity looks up a user by OIDC provider and subject ID under a read lock.
+// If the user is not found in memory, it optimistically checks whether storage has a newer revision
+// (e.g. written by another replica) and re-checks before returning nil.
 func (u *UsersClient) GetUserByIdentity(providerID, subjectID string) *UserProtoRow {
+	if providerID == "" || subjectID == "" {
+		return nil
+	}
+	if user := u.getUserByIdentityInMemory(providerID, subjectID); user != nil {
+		return user
+	}
+	if reloaded, _ := u.CheckAndReload(context.Background()); reloaded {
+		return u.getUserByIdentityInMemory(providerID, subjectID)
+	}
+	return nil
+}
+
+func (u *UsersClient) getUserByIdentityInMemory(providerID, subjectID string) *UserProtoRow {
 	u.Rwlock.RLock()
 	defer u.Rwlock.RUnlock()
 

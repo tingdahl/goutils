@@ -190,6 +190,16 @@ func (d *Document) ensureFresh(ctx context.Context, callOpts getOpts) error {
 	return err
 }
 
+// EnsureFresh validates that the in-memory document is up-to-date with storage
+// according to the provided options (e.g. WithForceCheck or WithMaxAge).
+func (d *Document) EnsureFresh(ctx context.Context, opts ...GetOption) error {
+	var callOpts getOpts
+	for _, opt := range opts {
+		opt(&callOpts)
+	}
+	return d.ensureFresh(ctx, callOpts)
+}
+
 func (d *Document) maybeRefreshBeforeRead() {
 	if !d.needsRevisionCheck(getOpts{}) {
 		return
